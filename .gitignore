@@ -1,0 +1,11 @@
+.scons_cache/
+.sconsign.dblite
+
+build/
+
+src/*.os
+ 
+.idea/
+.vscode/
+
+*.exe

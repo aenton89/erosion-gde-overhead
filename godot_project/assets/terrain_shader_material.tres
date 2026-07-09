@@ -1,0 +1,16 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3 uid="uid://chnptiutyr47r"]
+
+[ext_resource type="Shader" uid="uid://xiwfbyp5elbf" path="res://assets/terrain.gdshader" id="1_afd63"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_afd63")
+shader_parameter/color_flat = Color(0.25, 0.55, 0.15, 1)
+shader_parameter/color_mid = Color(0.45, 0.35, 0.22, 1)
+shader_parameter/color_steep = Color(0.32, 0.26, 0.2, 1)
+shader_parameter/flat_start = 0.96
+shader_parameter/flat_end = 0.92
+shader_parameter/rock_start = 0.82
+shader_parameter/rock_end = 0.62
+shader_parameter/roughness = 0.88
+shader_parameter/metallic = 0.0

@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3 uid="uid://1ugq2aepjo8v"]
+
+[ext_resource type="Script" uid="uid://dgkffv111cobm" path="res://scripts/test.gd" id="1_nd71p"]
+[ext_resource type="Texture2D" uid="uid://dmuoxixlqcap3" path="res://icon.svg" id="2_7ddre"]
+
+[node name="Node2D" type="Node2D"]
+
+[node name="Node" type="Node" parent="."]
+script = ExtResource("1_nd71p")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+
+[node name="Screensaver2" type="Screensaver" parent="."]
+texture = ExtResource("2_7ddre")

@@ -1,0 +1,11 @@
+[gd_resource type="PipeErosionSettings" format=3 uid="uid://8mal4cy5bt8l"]
+
+[resource]
+dt = 0.01
+pipe_area = 0.01
+Kc = 0.3
+Ks = 0.01
+Kd = 0.3
+rain_iterations = 5
+min_tilt_sin = 0.01
+max_velocity = 3.0
