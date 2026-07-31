@@ -85,11 +85,9 @@ func erode_terrain() -> void:
 	
 	var P: = Engine.get_singleton("Profiler")
 	
-	#P.record_memory("before")
-	P.start_memory_sampling(1, "hydraulic_cpp")
+	#P.start_memory_sampling(1, "hydraulic_cpp", 1)
 	P.profile("HydraulicCPP", "erode", Callable(erosion, "erode"), [heightmap, erosion_iterations, erosion_settings])
-	P.stop_memory_sampling()
-	#P.record_memory("after")
+	#P.stop_memory_sampling()
 	
 	mesh_instance.mesh = P.profile("HydraulicCPP", "generate_mesh", Callable(renderer, "generate_mesh"), [heightmap])
 	apply_material()
@@ -97,8 +95,8 @@ func erode_terrain() -> void:
 	var data_dir: String = ProjectSettings.globalize_path("res://") + "../data_analysis/data/"
 	DirAccess.make_dir_recursive_absolute(data_dir)
 	
-	P.save_csv(data_dir + "hydraulic_cpp.csv")
-	P.save_memory_csv(data_dir + "hydraulic_cpp_mem.csv")
+	#P.save_csv(data_dir + "hydraulic_cpp.csv")
+	#P.save_memory_csv(data_dir + "hydraulic_cpp_mem.csv")
 
 func generate_terrain() -> void:
 	if !generator_settings:
@@ -132,7 +130,7 @@ func generate_terrain() -> void:
 	var data_dir: String = ProjectSettings.globalize_path("res://") + "../data_analysis/data/"
 	DirAccess.make_dir_recursive_absolute(data_dir)
 	var path: String = data_dir + "hydraulic_cpp.csv"
-	P.save_csv(path)
+	#P.save_csv(path)
 
 func apply_material() -> void:
 	if !mesh_instance or !mesh_instance.mesh:

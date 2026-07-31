@@ -72,6 +72,13 @@ REALTIME_DIR = "data/realtime"
 # jakoś 16.667 ms
 FPS_BUDGET_MS = 1000.0 / 60.0
 
+# w sumie już tylko dla threada ta zmiana
+IMPL_STYLE = {
+    "baseline": {"color": "#2E5EAA", "linestyle": "--"},
+    "gds": {"color": "#C1443C", "linestyle": "--"},
+    "optimized": {"color": "#3C9D6B", "linestyle": "-"},
+}
+
 
 
 # ŚCIEŻKI PER KATEGORIA
@@ -283,26 +290,35 @@ def plot_time_vs_threads(algo: str) -> None:
     opt_threads = sorted(sub[sub["impl"] == "optimized"]["threads_used"].unique())
     x_lo, x_hi = (min(opt_threads), max(opt_threads)) if len(opt_threads) > 1 else DEFAULT_THREAD_RANGE
 
-    fig, ax = plt.subplots()
-    for impl, g in sub.groupby("impl"):
-        if impl == "optimized" and len(g) > 1:
-            g = g.sort_values("threads_used")
-            ax.plot(g["threads_used"], g["mean_us"] / 1000.0, marker="o", label=impl)
+    for log_variant in (False, True):
+        fig, ax = plt.subplots()
+        for impl, g in sub.groupby("impl"):
+            style = IMPL_STYLE.get(impl, {"color": "#4C4C4C", "linestyle": "-"})
+            if impl == "optimized" and len(g) > 1:
+                g = g.sort_values("threads_used")
+                ax.plot(g["threads_used"], g["mean_us"] / 1000.0, marker="o", color=style["color"], linestyle=style["linestyle"], label=impl)
+            else:
+                ref = g["mean_us"].mean() / 1000.0
+                ax.hlines(ref, x_lo, x_hi, color=style["color"], linestyles=style["linestyle"], label=f"{impl} (1 watek)")
+
+        ax.set_xlabel("Thread count")
+        ax.set_ylabel("Time [ms]")
+    
+        if log_variant:
+            ax.set_yscale("log")
+            suffix, title = "log", f"{algo}: time vs thread count (map {max_size}x{max_size}) (log scale)"
         else:
-            ref = g["mean_us"].mean() / 1000.0
-            ax.hlines(ref, x_lo, x_hi, linestyles="--", label=f"{impl} (1 watek)")
+            _plain_y_axis(ax)
+            suffix, title = "linear", f"{algo}: time vs thread count (map {max_size}x{max_size})"
+        
+        ax.set_title(title)
+        ax.legend()
 
-    ax.set_xlabel("Thread count")
-    ax.set_ylabel("Time [ms]")
-    _plain_y_axis(ax)
-    ax.set_title(f"{algo}: time vs thread count (map {max_size}x{max_size})")
-    ax.legend()
-
-    fig.tight_layout()
-    out = output_file(f"{algo}_time_vs_threads.png")
-    fig.savefig(out)
-    print(f"[{algo}] saved - {out}")
-    plt.show()
+        fig.tight_layout()
+        out = output_file(f"{algo}_time_vs_threads_{suffix}.png")
+        fig.savefig(out)
+        print(f"[{algo}] saved - {out}")
+        plt.show()
 
 
 # 3.2. CZAS vs ROZMIAR MAPY oraz SKALOWANIE (ns/komorke) - liniowo i logarytmicznie
@@ -484,21 +500,26 @@ def plot_memory(algo: str, target_bins: int = 60) -> None:
 
         for _run, gg in g.groupby("run"):
             gg = gg.sort_values("elapsed_us")
-            ax.plot(gg["elapsed_us"] / 1000.0, gg["private_bytes"] / 1e6, color=color, alpha=0.18, linewidth=0.8)
+            base = gg["private_bytes"].iloc[0]
+            ax.plot(gg["elapsed_us"] / 1000.0, (gg["private_bytes"] - base) / 1e6, color=color, alpha=0.18, linewidth=0.8)
 
-        gb = g.copy()
+        gb = g.sort_values(["run", "elapsed_us"]).copy()
+        gb["delta_bytes"] = gb.groupby("run")["private_bytes"].transform(lambda s: s - s.iloc[0])
         gb["t_bin"] = (gb["elapsed_us"] / 1000.0 // bin_ms) * bin_ms
-        med = gb.groupby("t_bin")["private_bytes"].median() / 1e6
+        med = gb.groupby("t_bin")["delta_bytes"].median() / 1e6
         ax.plot(med.index, med.values, color=color, linewidth=2.2)
+
+        formula = ANALYTICAL_BYTES.get(algo)
+        if formula:
+            ax.axhline(formula(max_size) / 1e6, color="#999999", linestyle="--", linewidth=1)
 
         ax.set_xlabel("Time [ms]")
         if idx == 0:
-            ax.set_ylabel("Private memory [MB]")
+            ax.set_ylabel("Memory growth vs start [MB]")
         _plain_y_axis(ax)
         ax.set_title(f"{impl} ({g['run'].nunique()} runs)")
 
-    fig.suptitle(f"{algo}: memory in time per implementation, map {max_size}x{max_size}",
-                 fontweight="bold")
+    fig.suptitle(f"{algo}: memory in time per implementation, map {max_size}x{max_size}", fontweight="bold")
     fig.tight_layout()
     out = output_file(f"{algo}_memory.png")
     fig.savefig(out)

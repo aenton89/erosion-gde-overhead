@@ -47,7 +47,7 @@ func _alloc(size: int) -> void:
 	_cached_size = size
 
 # 1st step
-func _step_flux(terrain: PackedFloat32Array, size: int, cfg: PipeErosionSettings) -> void:
+func _step_flux(terrain: PackedFloat32Array, size: int, cfg: PipeErosionSettingsGDS) -> void:
 	var dt: float = cfg.dt
 	var l: float = cfg.pipe_length
 	var l2: float = l * l
@@ -92,7 +92,7 @@ func _step_flux(terrain: PackedFloat32Array, size: int, cfg: PipeErosionSettings
 			_flux_t[i] = ft; _flux_b[i] = fb
 
 # 2nd step
-func _step_water(size: int, cfg: PipeErosionSettings) -> void:
+func _step_water(size: int, cfg: PipeErosionSettingsGDS) -> void:
 	var dt: float = cfg.dt
 	var l: float = cfg.pipe_length
 	var l2: float = l * l
@@ -127,7 +127,7 @@ func _step_water(size: int, cfg: PipeErosionSettings) -> void:
 				_vel_y[i] = 0.0
 
 # 3rd step
-func _step_erosion_deposition(terrain: PackedFloat32Array, size: int, cfg: PipeErosionSettings) -> void:
+func _step_erosion_deposition(terrain: PackedFloat32Array, size: int, cfg: PipeErosionSettingsGDS) -> void:
 	var Kc: float = cfg.Kc
 	var Ks: float = cfg.Ks
 	var Kd: float = cfg.Kd
@@ -173,7 +173,7 @@ func _step_erosion_deposition(terrain: PackedFloat32Array, size: int, cfg: PipeE
 			terrain[i] = maxf(0.0, terrain[i])
 
 # 4th step
-func _step_sediment_transport(size: int, cfg: PipeErosionSettings) -> void:
+func _step_sediment_transport(size: int, cfg: PipeErosionSettingsGDS) -> void:
 	var dt: float = cfg.dt
 	var l: float = cfg.pipe_length
 	
@@ -205,7 +205,7 @@ func _step_sediment_transport(size: int, cfg: PipeErosionSettings) -> void:
 	_sediment = _sediment_new
 
 # 5th step
-func _step_evaporation(terrain: PackedFloat32Array, size: int, cfg: PipeErosionSettings) -> void:
+func _step_evaporation(terrain: PackedFloat32Array, size: int, cfg: PipeErosionSettingsGDS) -> void:
 	var factor: float = 1.0 - cfg.Ke * cfg.dt
 	for i in range(size * size):
 		_water[i] = maxf(0.0, _water[i] * factor)
@@ -214,23 +214,17 @@ func _step_evaporation(terrain: PackedFloat32Array, size: int, cfg: PipeErosionS
 			terrain[i] += _sediment[i]
 			_sediment[i] = 0.0
 
-func erode(hmap: HeightmapGDS, num_iterations: int, config: PipeErosionSettings) -> void:
+func erode(hmap: HeightmapGDS, num_iterations: int, config: PipeErosionSettingsGDS) -> void:
 	var size: int = hmap.get_size()
 	_alloc(size)
 	
-	var terrain: PackedFloat32Array = PackedFloat32Array()
+	var terrain: PackedFloat32Array = hmap.data.duplicate()
 	terrain.resize(size * size)
 	
 	for y in range(size):
 		for x in range(size):
 			#terrain[y * size + x] = hmap.get_value(x, y)
 			terrain[y * size + x] = hmap.data[y * size + x]
-	
-	var orig_min: float = terrain[0]
-	var orig_max: float = terrain[0]
-	for v in terrain:
-		orig_min = minf(orig_min, v)
-		orig_max = maxf(orig_max, v)
 	
 	var rain_every: int = max(1, config.rain_iterations)
 	var rain: float = config.rain_rate

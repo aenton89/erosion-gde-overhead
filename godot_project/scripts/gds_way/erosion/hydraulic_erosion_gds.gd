@@ -76,17 +76,12 @@ func _calc_hg(map: PackedFloat32Array, map_size: int, pos_x: float, pos_y: float
 	
 	return Vector3(height, grad_x, grad_y)
 
-func erode(hmap: HeightmapGDS, num_iterations: int, config: HydraulicErosionSettings) -> void:
+func erode(hmap: HeightmapGDS, num_iterations: int, config: HydraulicErosionSettingsGDS) -> void:
 	var map_size: int = hmap.get_size()
 	_init_brush(map_size, config.erosion_radius)
 	
 	# kopia danych jako PackedFloat32Array do szybkiej pracy
-	var map: PackedFloat32Array = PackedFloat32Array()
-	map.resize(map_size * map_size)
-	for y in range(map_size):
-		for x in range(map_size):
-			#map[y * map_size + x] = float(hmap.get_value(x, y))
-			map[y * map_size + x] = hmap.data[y * map_size + x]
+	var map: PackedFloat32Array = hmap.data.duplicate()
 	
 	if _curr_seed != config.seed:
 		rng.seed = config.seed

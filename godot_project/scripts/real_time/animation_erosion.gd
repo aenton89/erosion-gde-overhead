@@ -13,6 +13,7 @@ class_name ErosionAnimation
 @export_category("Render")
 @export var height_scale: float = 1.0
 @export var use_height_color: bool = false : set = set_use_height_color
+@export var camera: Camera3D
 
 @export_category("Real-time Erosion")
 @export var iterations_at_once: int = 5
@@ -23,14 +24,14 @@ class_name ErosionAnimation
 @export var use_fixture: bool = true
 @export var fixtrs_dir: String = "../data_analysis/data/fixtures/"
 @export var realt_dir: String = "../data_analysis/data/realtime/"
-@export var benchmark_duration_sec: float = 5.0
+@export var benchmark_duration_sec: float = 10.0
 @export var warmup_frames: int = 5
-@export var iters_at_once_values: Array[int] = [1, 2, 3, 5, 8, 13, 21]
+@export var iters_at_once_values: Array[int] = [1, 2, 3, 5, 8, 13, 21, 34]
 @export var map_sizes: Array[int] = [32, 64, 128, 256, 512]
 @export var auto_run_benchmark_on_launch: bool = true
 
 @export_category("Preview (Editor)")
-@export var preview_duration_sec: int = 5.0
+@export var preview_duration_sec: float = 5.0
 @export var run_preview: bool = false : set = on_run_preview
 
 @export_category("Debug")
@@ -44,6 +45,8 @@ var rt_renderer: TerrainRealtimeRenderer = TerrainRealtimeRenderer.new()
 # GDS albo CPP
 var heightmap
 var erosion
+var pipe_settings_gds: PipeErosionSettingsGDS
+var hydraulic_settings_gds: HydraulicErosionSettingsGDS
 
 
 
@@ -110,7 +113,10 @@ func is_pipe(impl_name: String) -> bool:
 	return impl_name.begins_with("pipe")
 
 func current_settings() -> Resource:
-	return pipe_settings if is_pipe(active_impl) else hydraulic_settings
+	if is_gds(active_impl):
+		return pipe_settings_gds if is_pipe(active_impl) else hydraulic_settings_gds
+	else:
+		return pipe_settings if is_pipe(active_impl) else hydraulic_settings
 
 func heightmap_data() -> PackedFloat32Array:
 	return heightmap.data if is_gds(active_impl) else heightmap.get_data()
@@ -127,10 +133,14 @@ func setup_erosion(impl_name: String) -> void:
 			erosion = PipeErosion.new()
 		"pipe_gds":
 			erosion = PipeErosionGDS.new()
+			pipe_settings_gds = PipeErosionSettingsGDS.new()
+			pipe_settings_gds.copy_from_cpp(pipe_settings)
 		"hydraulic_cpp":
 			erosion = HydraulicErosion.new()
 		"hydraulic_gds":
 			erosion = HydraulicErosionGDS.new()
+			hydraulic_settings_gds = HydraulicErosionSettingsGDS.new()
+			hydraulic_settings_gds.copy_from_cpp(hydraulic_settings)
 		_:
 			push_error("ErosionAnimation: unknown erosion implementation: %s" % impl_name)
 	
@@ -140,6 +150,7 @@ func setup_erosion(impl_name: String) -> void:
 func setup_renderer(map_size: int) -> void:
 	rt_renderer.setup_mesh_and_material(mesh_instance, map_size, height_scale, "res://assets/terrain_realtime.gdshader")
 	rt_renderer.set_use_height_color(use_height_color)
+	frame_camera(map_size)
 
 func generate_terrain(map_size_override: int = -1) -> void:
 	if !generator_settings or !mesh_instance:
@@ -186,6 +197,7 @@ func load_fixture(map_size: int) -> void:
 func run_full_benchmark() -> void:
 	await run_benchmarks(PIP_IMPLS, "realtime_pipe")
 	await run_benchmarks(HYD_IMPLS, "realtime_particle")
+	print("ALL REAL-TIME BENCHMARKS DONE 'N SAVED")
 
 func run_benchmarks(impls: Array[String], out_name: String, write_csv: bool = true) -> void:
 	if !validate():
@@ -217,6 +229,9 @@ func run_benchmarks(impls: Array[String], out_name: String, write_csv: bool = tr
 			for iters in iters_at_once_values:
 				# reset przed każdą próbą
 				generate_terrain(map_size)
+				
+				#if !await benchmark_one(impl_name, map_size, iters, benchmark_duration_sec, raw_path, summary_path, write_csv):
+					#break
 				await benchmark_one(impl_name, map_size, iters, benchmark_duration_sec, raw_path, summary_path, write_csv)
 	
 	DisplayServer.window_set_vsync_mode(prev_vsync)
@@ -224,12 +239,12 @@ func run_benchmarks(impls: Array[String], out_name: String, write_csv: bool = tr
 	if write_csv:
 		print("Real-time benchmark done 'n saved: %s / %s" % [raw_path, summary_path])
 
-func benchmark_one(impl_name: String, map_size: int, iters: int, duration_sec: float, raw_path: String, summary_path: String, write_csv: bool) -> void:
+func benchmark_one(impl_name: String, map_size: int, iters: int, duration_sec: float, raw_path: String, summary_path: String, write_csv: bool) -> bool:
 	var frame_idx: int = 0
 	var recorded_ms: Array[float] = []
-	var elapsed_sec: float = 0.0
+	var t_start: int = Time.get_ticks_usec()
 	
-	while elapsed_sec < duration_sec:
+	while (Time.get_ticks_usec() - t_start) / 1000000.0 < duration_sec:
 		var t0: int = Time.get_ticks_usec()
 		
 		erosion.erode(heightmap, iters, current_settings())
@@ -244,10 +259,9 @@ func benchmark_one(impl_name: String, map_size: int, iters: int, duration_sec: f
 			if write_csv:
 				append_row(raw_path, "%s,%d,%d,%d,%f" % [impl_name, map_size, iters, frame_idx - warmup_frames, frame_ms])
 		
-		elapsed_sec += frame_ms / 1000.0
 		await get_tree().process_frame
 	
-	report(impl_name, map_size, iters, recorded_ms, write_csv, summary_path)
+	return report(impl_name, map_size, iters, recorded_ms, write_csv, summary_path)
 
 func run_preview_once() -> void:
 	if !validate():
@@ -264,10 +278,10 @@ func run_preview_once() -> void:
 
 
 
-func report(impl_name: String, map_size: int, iters: int, recorded_ms: Array[float], write_csv: bool, summary_path: String) -> void:
+func report(impl_name: String, map_size: int, iters: int, recorded_ms: Array[float], write_csv: bool, summary_path: String) -> bool:
 	if recorded_ms.is_empty():
 		print("At: [%s map=%d @ %d iter] missing frames after warmup - shorter warmup or longer run required" % [impl_name, map_size, iters])
-		return
+		return false
 	
 	recorded_ms.sort()
 	var n: int = recorded_ms.size()
@@ -286,6 +300,8 @@ func report(impl_name: String, map_size: int, iters: int, recorded_ms: Array[flo
 	
 	if write_csv:
 		append_row(summary_path, "%s,%d,%d,%d,%f,%f,%f,%f,%s" % [impl_name, map_size, iters, n, mean, median, p95, iters_per_sec, "true" if within_budget else "false"])
+	
+	return within_budget
 
 func append_row(path: String, row: String) -> void:
 	var file: FileAccess= FileAccess.open(path, FileAccess.READ_WRITE)
@@ -317,3 +333,9 @@ func validate() -> bool:
 		ok = false
 	
 	return ok
+
+func frame_camera(map_size: int) -> void:
+	if !camera:
+		return
+	
+	camera.position.z = map_size * 0.5

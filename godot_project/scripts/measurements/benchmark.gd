@@ -34,8 +34,10 @@ class_name Benchmark
 
 @export_category("Run")
 @export_subgroup("Main Settings")
+@export var auto_run_on_launch: bool = true
 @export var generate_fixtrs: bool = false : set = on_generate_fixtrs
-@export var run_all: bool = false : set = on_run_all
+@export var run_full: bool = false : set = on_run_full
+@export var run_benchmarks: bool = false : set = on_run_benchmarks
 @export_subgroup("Single Benchmarks")
 @export var run_pipe_optimized: bool = false : set = on_run_pipe_optimized
 @export var run_pipe_cpp: bool = false : set = on_run_pipe_cpp
@@ -47,13 +49,30 @@ class_name Benchmark
 
 
 var overhead_msr: OverheadMeasure
+var pipe_settings_gds: PipeErosionSettingsGDS
+var hydraulic_settings_gds: HydraulicErosionSettingsGDS
 
 
 
-func on_run_all(v: bool) -> void:
+func _ready() -> void:
+	if Engine.is_editor_hint():
+		return
+	if !auto_run_on_launch:
+		return
+	
+	run_both_benchmarks()
+
+
+
+func on_run_full(v: bool) -> void:
+	if v:
+		run_both_benchmarks()
+		run_full = false
+
+func on_run_benchmarks(v: bool) -> void:
 	if v:
 		run_benchmark()
-		run_all = false
+		run_benchmarks = false
 
 func on_run_pipe_optimized(v: bool) -> void:
 	if v:
@@ -96,6 +115,17 @@ func on_run_correctness(v: bool) -> void:
 		run_correctness = false
 
 
+
+func run_both_benchmarks() -> void:
+	run_benchmark()
+	measure_memory = !measure_memory
+	measure_timing = !measure_timing
+	
+	run_benchmark()
+	measure_memory = !measure_memory
+	measure_timing = !measure_timing
+	
+	print("BOTH BENCHMARKS DONE 'N SAVED")
 
 func run_benchmark() -> void:
 	if !validate(): 
@@ -203,13 +233,17 @@ func run_algo(algo: String, map_size: int, iters: int, P: Object, repeat_nb: int
 			call_erode(erosion, algo, heightmap, iters, pipe_settings, P, repeat_nb)
 		"pipe_gds":
 			var erosion: PipeErosionGDS = PipeErosionGDS.new()
-			call_erode(erosion, algo, heightmap, iters, pipe_settings, P, repeat_nb)
+			pipe_settings_gds = PipeErosionSettingsGDS.new()
+			pipe_settings_gds.copy_from_cpp(pipe_settings)
+			call_erode(erosion, algo, heightmap, iters, pipe_settings_gds, P, repeat_nb)
 		"hydraulic_cpp":
 			var erosion: HydraulicErosion = HydraulicErosion.new()
 			call_erode(erosion, algo, heightmap, iters, hydraulic_settings, P, repeat_nb)
 		"hydraulic_gds":
 			var erosion: HydraulicErosionGDS = HydraulicErosionGDS.new()
-			call_erode(erosion, algo, heightmap, iters, hydraulic_settings, P, repeat_nb)
+			hydraulic_settings_gds = HydraulicErosionSettingsGDS.new()
+			hydraulic_settings_gds.copy_from_cpp(hydraulic_settings)
+			call_erode(erosion, algo, heightmap, iters, hydraulic_settings_gds, P, repeat_nb)
 
 func call_erode(erosion: Object, algo: String, heightmap: Object, iters: int, settings: Resource, P: Object, repeat_nb: int) -> void:
 	if measure_memory:
@@ -264,7 +298,8 @@ func run_correctness_check() -> void:
 		
 		var hm_gds: HeightmapGDS = load_heightmap_for("pipe_gds", map_size)
 		var gds: PipeErosionGDS = PipeErosionGDS.new()
-		gds.erode(hm_gds, iters, pipe_settings)
+		pipe_settings_gds.copy_from_cpp(pipe_settings)
+		gds.erode(hm_gds, iters, pipe_settings_gds)
 		Helpers.save_terrain_binary(correctness_path("pipe_gds", map_size), hm_gds.get_size(), hm_gds.get_data())
 		
 		print(" map=%dx%d done" % [map_size, map_size])
@@ -344,4 +379,9 @@ func validate() -> bool:
 	if map_configs.is_empty():
 		push_error("map_configs is empty!")
 		return false
+	for cfg in map_configs:
+		var fpath: String = terrain_fixtrs_path(cfg.x)
+		if !FileAccess.file_exists(fpath):
+			push_error("Benchmark: missing fixture %s - first run generate_terrain_fixtrs" % fpath)
+			return false
 	return true

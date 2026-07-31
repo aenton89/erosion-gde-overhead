@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="HydraulicErosionSettingsGDS" load_steps=2 format=3 uid="uid://dmhqdlb8ee1af"]
+
+[ext_resource type="Script" uid="uid://2c804hfhmrok" path="res://scripts/gds_way/erosion/hydraulic_erosion_settings_gds.gd" id="1_w7uvq"]
+
+[resource]
+script = ExtResource("1_w7uvq")
+metadata/_custom_type_script = "uid://2c804hfhmrok"

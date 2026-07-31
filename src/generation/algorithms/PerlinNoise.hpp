@@ -22,8 +22,8 @@ private:
     
     void init_permutation(int seed);
     float fade(float t) const;
-    float lerp (float a, float b, float t) const;
-    float grad (int hash, float x, float y) const;
+    float lerp(float a, float b, float t) const;
+    float grad(int hash, float x, float y) const;
     float noise(float x, float y) const;
 
 public:

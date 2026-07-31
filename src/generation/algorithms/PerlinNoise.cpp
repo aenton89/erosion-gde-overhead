@@ -72,7 +72,7 @@ float PerlinNoise::noise(float x, float y) const {
 Ref<Heightmap> PerlinNoise::generate(const Ref<PerlinNoiseSettings>& config) {
     init_permutation(config->get_seed());
 
-    float min_val =  1e9f;
+    float min_val = 1e9f;
     float max_val = -1e9f;
 
     std::vector<std::vector<float>> raw(config->get_map_size(), std::vector<float>(config->get_map_size()));

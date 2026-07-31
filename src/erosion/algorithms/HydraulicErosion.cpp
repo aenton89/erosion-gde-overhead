@@ -94,14 +94,8 @@ void HydraulicErosion::erode(Ref<Heightmap> heightmap, int num_iterations, const
     const int map_size = heightmap->size;
     init_brush(map_size, config->get_erosion_radius());
 
-    // Heightmap trzyma float — kopiujemy bezpośrednio
-    std::vector<float> map(map_size * map_size);
-    {
-        const float* src = heightmap->data.ptr();
-        for (int i = 0; i < map_size * map_size; i++){
-            map[i] = src[i];
-        }
-    }
+    // Heightmap trzyma float - bezpośrednia kopia
+    std::vector<float> map(heightmap->data.ptr(), heightmap->data.ptr() + map_size * map_size);
 
     if (current_seed != config->get_seed()) {
         rng.seed(config->get_seed());
@@ -177,7 +171,7 @@ void HydraulicErosion::erode(Ref<Heightmap> heightmap, int num_iterations, const
         }
     }
 
-    // zapisz z powrotem do Heightmap
+    // zapis z powrotem do Heightmap
     {
         float* dst = heightmap->data.ptrw();
         for (int i = 0; i < map_size * map_size; i++){

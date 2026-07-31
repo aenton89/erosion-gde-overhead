@@ -431,13 +431,7 @@ void PipeErosionOptimized::erode(Ref<Heightmap> heightmap, int num_iterations, c
     const int size = heightmap->size;
     alloc(size);
 
-    std::vector<float> terrain(size * size);
-    {
-        const float* src = heightmap->data.ptr();
-        for (int i = 0; i < size * size; i++) {
-            terrain[i] = src[i];
-        }
-    }
+    std::vector<float> terrain(heightmap->data.ptr(), heightmap->data.ptr() + size * size);
 
     const int rain_every = std::max(1, config->get_rain_iterations());
     const float rain_dt = config->get_rain_rate() * config->get_dt();
@@ -467,8 +461,10 @@ void PipeErosionOptimized::erode(Ref<Heightmap> heightmap, int num_iterations, c
         step_evaporation(terrain, size, config);
     }
 
-    float* dst = heightmap->data.ptrw();
-    for (int i = 0; i < size * size; i++){
-        dst[i] = std::max(0.0f, terrain[i]);
+    {
+        float* dst = heightmap->data.ptrw();
+        for (int i = 0; i < size * size; i++){
+            dst[i] = std::max(0.0f, terrain[i]);
+        }
     }
 }

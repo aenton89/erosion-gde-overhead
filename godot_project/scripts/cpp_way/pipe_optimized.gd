@@ -92,7 +92,7 @@ func erode_terrain() -> void:
 	
 	var data_dir: String = ProjectSettings.globalize_path("res://") + "../data_analysis/data/"
 	DirAccess.make_dir_recursive_absolute(data_dir)
-	P.save_time_csv(data_dir + "pipe_optimized.csv")
+	#P.save_time_csv(data_dir + "pipe_optimized.csv")
 
 func generate_terrain() -> void:
 	if !generator_settings:
@@ -126,7 +126,7 @@ func generate_terrain() -> void:
 	var data_dir: String = ProjectSettings.globalize_path("res://") + "../data_analysis/data/"
 	DirAccess.make_dir_recursive_absolute(data_dir)
 	var path: String = data_dir + "pipe_optimized.csv"
-	P.save_time_csv(path)
+	#P.save_time_csv(path)
 
 func apply_material() -> void:
 	if !mesh_instance or !mesh_instance.mesh:

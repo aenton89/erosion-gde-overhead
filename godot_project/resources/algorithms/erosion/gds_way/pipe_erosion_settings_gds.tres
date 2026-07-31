@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="PipeErosionSettingsGDS" load_steps=2 format=3 uid="uid://cwynr0oqitbdt"]
+
+[ext_resource type="Script" uid="uid://c5uidjqjari2t" path="res://scripts/gds_way/erosion/pipe_erosion_settings_gds.gd" id="1_oac7o"]
+
+[resource]
+script = ExtResource("1_oac7o")
+dt = 0.01
+pipe_area = 0.01
+Kc = 0.3
+Ks = 0.01
+Kd = 0.3
+rain_iterations = 5
+min_tilt_sin = 0.01
+max_velocity = 3.0
+metadata/_custom_type_script = "uid://c5uidjqjari2t"

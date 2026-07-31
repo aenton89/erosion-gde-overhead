@@ -9,7 +9,7 @@ class_name ToolPipeGDS
 
 @export_category("Resources")
 @export var generator_settings: PerlinNoiseSettings
-@export var erosion_settings: PipeErosionSettings
+@export var erosion_settings: PipeErosionSettingsGDS
 
 @export_category("Generation Settings")
 @export_subgroup("Render Settings")

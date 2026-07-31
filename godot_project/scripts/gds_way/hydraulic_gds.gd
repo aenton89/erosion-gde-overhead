@@ -8,7 +8,7 @@ class_name HydraulicToolGDS
 
 @export_category("Resources")
 @export var generator_settings: PerlinNoiseSettings
-@export var erosion_settings: HydraulicErosionSettings
+@export var erosion_settings: HydraulicErosionSettingsGDS
 
 @export_category("Generation Settings")
 @export_subgroup("Render Settings")
@@ -77,17 +77,17 @@ func erode_terrain() -> void:
 	
 	var P: = Engine.get_singleton("Profiler")
 	
-	P.start_memory_sampling(1, "hydraulic_cpp")
+	#P.start_memory_sampling(1, "hydraulic_cpp")
 	P.profile("HydraulicGDS", "erode", Callable(erosion, "erode"), [heightmap, erosion_iterations, erosion_settings])
-	P.stop_memory_sampling()
+	#P.stop_memory_sampling()
 	
 	mesh_instance.mesh = P.profile("HydraulicGDS", "generate_mesh", Callable(renderer, "generate_mesh"), [heightmap])
 	apply_material()
 	
 	var data_dir: String = ProjectSettings.globalize_path("res://") + "../data_analysis/data/"
 	DirAccess.make_dir_recursive_absolute(data_dir)
-	P.save_csv(data_dir + "hydraulic_gds.csv")
-	P.save_memory_csv(data_dir + "hydraulic_gds_mem.csv")
+	#P.save_csv(data_dir + "hydraulic_gds.csv")
+	#P.save_memory_csv(data_dir + "hydraulic_gds_mem.csv")
 
 func generate_terrain() -> void:
 	if !mesh_instance:
@@ -114,7 +114,7 @@ func generate_terrain() -> void:
 	
 	var data_dir: String = ProjectSettings.globalize_path("res://") + "../data_analysis/data/"
 	DirAccess.make_dir_recursive_absolute(data_dir)
-	P.save_csv(data_dir + "hydraulic_gds.csv")
+	#P.save_csv(data_dir + "hydraulic_gds.csv")
 
 func apply_material() -> void:
 	if !mesh_instance or !mesh_instance.mesh:

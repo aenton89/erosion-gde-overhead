@@ -2,8 +2,8 @@
 
 [ext_resource type="Script" uid="uid://bbo87xxs58lu" path="res://scripts/measurements/benchmark.gd" id="1_5etgs"]
 [ext_resource type="PerlinNoiseSettings" uid="uid://bp1jd42kp5q3d" path="res://resources/algorithms/ptg/perlin_noise_settings.tres" id="2_anwj7"]
-[ext_resource type="PipeErosionSettings" uid="uid://8mal4cy5bt8l" path="res://resources/algorithms/erosion/pipe_erosion_settings.tres" id="3_emf03"]
-[ext_resource type="HydraulicErosionSettings" uid="uid://k6je26klxnad" path="res://resources/algorithms/erosion/hydraulic_erosion_settings.tres" id="4_ggp4n"]
+[ext_resource type="PipeErosionSettings" uid="uid://8mal4cy5bt8l" path="res://resources/algorithms/erosion/cpp_way/pipe_erosion_settings.tres" id="3_emf03"]
+[ext_resource type="HydraulicErosionSettings" uid="uid://k6je26klxnad" path="res://resources/algorithms/erosion/cpp_way/hydraulic_erosion_settings.tres" id="4_ggp4n"]
 
 [node name="Benchmark" type="Node"]
 script = ExtResource("1_5etgs")
