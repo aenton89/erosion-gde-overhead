@@ -152,7 +152,7 @@ void PipeErosionOptimized::step_flux(const std::vector<float>& terrain, int size
 
 
 // FAZA 2: poziom wody i prędkość
-// gather z sąsiednich wierszy; SIMD nie pomaga, tylko OpenMP
+// analogicznie do fazy 1, jednak z wektoryzacją i wielowątkowością
 void PipeErosionOptimized::step_water(int size, const Ref<PipeErosionSettings>& cfg) {
     const float dt = cfg->get_dt();
     const float l = cfg->get_pipe_length();
@@ -161,9 +161,30 @@ void PipeErosionOptimized::step_water(int size, const Ref<PipeErosionSettings>& 
     const float inv_l2 = dt / l2;
     const float inv_2l = 1.0f / (2.0f * l);
 
+    const float* __restrict fl_a = flux_l.data();
+    const float* __restrict fr_a = flux_r.data();
+    const float* __restrict ft_a = flux_t.data();
+    const float* __restrict fb_a = flux_b.data();
+    float* __restrict wat = water.data();
+    float* __restrict vx = vel_x.data();
+    float* __restrict vy = vel_y.data();
+ 
+    const hn::ScalableTag<float> d_tag;
+    const int W = static_cast<int>(hn::Lanes(d_tag));
+ 
+    const auto v_zero = hn::Zero(d_tag);
+    const auto v_one = hn::Set(d_tag, 1.0f);
+    const auto v_half = hn::Set(d_tag, 0.5f);
+    const auto v_inv_l2 = hn::Set(d_tag, inv_l2);
+    const auto v_inv_2l = hn::Set(d_tag, inv_2l);
+    const auto v_max = hn::Set(d_tag, max_vel);
+    const auto v_neg_max = hn::Set(d_tag, -max_vel);
+    const auto v_eps = hn::Set(d_tag, 1e-4f);
+
     #pragma omp parallel for schedule(static)
     for (int y = 0; y < size; y++) {
-        for (int x = 0; x < size; x++) {
+
+        auto scalar = [&](int x) {
             const int i = y * size + x;
 
             float fin_l = (x > 0) ? flux_r[i - 1] : 0.0f;
@@ -182,14 +203,69 @@ void PipeErosionOptimized::step_water(int size, const Ref<PipeErosionSettings>& 
             if (d_avg > 1e-4f) {
                 float u = (fin_l - flux_l[i] + flux_r[i] - fin_r) * inv_2l / d_avg;
                 float v = (fin_t - flux_t[i] + flux_b[i] - fin_b) * inv_2l / d_avg;
-                vel_x[i] = std::max(-max_vel, std::min(max_vel, u));
-                vel_y[i] = std::max(-max_vel, std::min(max_vel, v));
+                vx[i] = std::max(-max_vel, std::min(max_vel, u));
+                vy[i] = std::max(-max_vel, std::min(max_vel, v));
             } else {
-                vel_x[i] = vel_y[i] = 0.0f;
+                vx[i] = vy[i] = 0.0f;
+            }
+        };
+
+        scalar(0);
+    
+        if (y > 0 && y < size - 1){
+            int x = 1;
+            
+            for (; x + W <= size - 1; x += W) {
+                const int i = y * size + x;
+
+                // wnętrze mapy, więc bez warunków brzegowych
+                auto fin_l = hn::LoadU(d_tag, fr_a + i - 1);
+                auto fin_r = hn::LoadU(d_tag, fl_a + i + 1);
+                auto fin_t = hn::LoadU(d_tag, fb_a + i - size);
+                auto fin_b = hn::LoadU(d_tag, ft_a + i + size);
+
+                auto f_l = hn::LoadU(d_tag, fl_a + i);
+                auto f_r = hn::LoadU(d_tag, fr_a + i);
+                auto f_t = hn::LoadU(d_tag, ft_a + i);
+                auto f_b = hn::LoadU(d_tag, fb_a + i);
+
+                auto sum_in = hn::Add(hn::Add(fin_l, fin_r), hn::Add(fin_t, fin_b));
+                auto sum_out = hn::Add(hn::Add(f_l, f_r), hn::Add(f_t, f_b));
+
+                auto d_prev = hn::LoadU(d_tag, wat + i);
+                auto d_new = hn::Max(v_zero, hn::Add(d_prev, hn::Mul(hn::Sub(sum_in, sum_out), v_inv_l2)));
+                hn::StoreU(d_new, d_tag, wat + i);
+
+                auto d_avg = hn::Mul(hn::Add(d_prev, d_new), v_half);
+                auto mask = hn::Gt(d_avg, v_eps);
+
+                // dzielnik podmienion y na 1, gdzie maska == false, żeby uniknąć dziwnego dzieleniea
+                auto den = hn::IfThenElse(mask, d_avg, v_one);
+
+                // kolejność zgodna z wersją skalarną
+                auto u = hn::Div(hn::Mul(hn::Sub(hn::Add(hn::Sub(fin_l, f_l), f_r), fin_r), v_inv_2l), den);
+                auto v = hn::Div(hn::Mul(hn::Sub(hn::Add(hn::Sub(fin_t, f_t), f_b), fin_b), v_inv_2l), den);
+
+                u = hn::Max(v_neg_max, hn::Min(v_max, u));
+                v = hn::Max(v_neg_max, hn::Min(v_max, v));
+
+                hn::StoreU(hn::IfThenElseZero(mask, u), d_tag, vx + i);
+                hn::StoreU(hn::IfThenElseZero(mask, v), d_tag, vy + i);
+            }
+
+            for (; x < size - 1; x++) {
+                scalar(x);
+            }
+        } else {
+            for (int x = 1; x < size - 1; x++) {
+                scalar(x);
             }
         }
+
+        scalar(size - 1);
     }
 }
+
 
 // FAZA 3: erozja i depozycja
 // dynamic schedule bo suche wiersze z AllFalse są szybsze - lepszy load balancing
@@ -346,9 +422,8 @@ void PipeErosionOptimized::step_sediment_transport(int size, const Ref<PipeErosi
     const float l = cfg->get_pipe_length();
     const float size_max = float(size - 1) - 1e-4f;
 
-    // zerowanie bufora, bo std::fill jest SIMD-friendly, kompilator wektoryzuje
-    std::fill(sediment_new.begin(), sediment_new.end(), 0.0f);
-
+    // jednak bufor nie wymaga zerowania, bo każdy element jest nadpisywany
+    
     #pragma omp parallel for schedule(static)
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
@@ -367,6 +442,117 @@ void PipeErosionOptimized::step_sediment_transport(int size, const Ref<PipeErosi
                 + sediment[y1 * size + x0] * (1 - fx) * fy
                 + sediment[y1 * size + x1] * fx * fy);
         }
+    }
+
+    std::swap(sediment, sediment_new);
+}
+
+void PipeErosionOptimized::step_sediment_transport_cfl(int size, const Ref<PipeErosionSettings>& cfg) {
+    const float dt = cfg->get_dt();
+    const float l = cfg->get_pipe_length();
+    const float size_max = float(size - 1) - 1e-4f;
+
+    const float* __restrict sed = sediment.data();
+    const float* __restrict vx = vel_x.data();
+    const float* __restrict vy = vel_y.data();
+    float* __restrict sed_out = sediment_new.data();
+
+    const hn::ScalableTag<float> d_tag;
+    const int W = static_cast<int>(hn::Lanes(d_tag));
+
+    const auto v_zero = hn::Zero(d_tag);
+    const auto v_one = hn::Set(d_tag, 1.0f);
+    const auto v_dt = hn::Set(d_tag, dt);
+    const auto v_l = hn::Set(d_tag, l);
+
+    #pragma omp parallel for schedule(static)
+    for (int y = 0; y < size; y++) {
+        // identyczna z wariantem ogólnym - użyta na brzgach i w ogolnie pętli
+        auto scalar = [&](int x) {
+            const int i = y * size + x;
+
+            float px = std::max(0.0f, std::min(size_max, float(x) - vx[i] * dt / l));
+            float py = std::max(0.0f, std::min(size_max, float(y) - vy[i] * dt / l));
+
+            int x0 = int(px), y0 = int(py);
+            int x1 = std::min(x0 + 1, size - 1), y1 = std::min(y0 + 1, size - 1);
+            float fx = px - float(x0), fy = py - float(y0);
+
+            sed_out[i] = std::max(0.0f,
+                sed[y0 * size + x0] * (1 - fx) * (1 - fy)
+                + sed[y0 * size + x1] * fx * (1 - fy)
+                + sed[y1 * size + x0] * (1 - fx) * fy
+                + sed[y1 * size + x1] * fx * fy);
+        };
+
+        scalar(0);
+
+        if (y > 0  && y < size - 1) {
+            int x = 1;
+            for (; x + W <= size - 1; x += W) {
+                const int i = y * size + x;
+
+                // przesunięcie względem własnej komórki, dx = px - x, dy = py - y, kolejność działań zachowana względem skalarnej
+                auto dx = hn::Neg(hn::Div(hn::Mul(hn::LoadU(d_tag, vx + i), v_dt), v_l));
+                auto dy = hn::Neg(hn::Div(hn::Mul(hn::LoadU(d_tag, vy + i), v_dt), v_l));
+
+                // ujemne przesunęcie to x0 = x-1, w przeciwnym razie x0 = x
+                auto left = hn::Lt(dx, v_zero);
+                auto up = hn::Lt(dy, v_zero);
+
+                // fx = px - x0, więc dx + 1 podczas cofania do sąsiada, inaczej dx
+                auto fx = hn::IfThenElse(left, hn::Add(dx, v_one), dx);
+                auto fy = hn::IfThenElse(up, hn::Add(dy, v_one), dy);
+
+                // dziewięć ciągłych loadów, wiersze y - 1, y, y + 1, przy przesunięciach -1, 0, +1
+                const int ia = i - size, ib = i, ic = i + size;
+                auto a0 = hn::LoadU(d_tag, sed + ia - 1);
+                auto a1 = hn::LoadU(d_tag, sed + ia);
+                auto a2 = hn::LoadU(d_tag, sed + ia + 1);
+                auto b0 = hn::LoadU(d_tag, sed + ib - 1);
+                auto b1 = hn::LoadU(d_tag, sed + ib);
+                auto b2 = hn::LoadU(d_tag, sed + ib + 1);
+                auto c0 = hn::LoadU(d_tag, sed + ic - 1);
+                auto c1 = hn::LoadU(d_tag, sed + ic);
+                auto c2 = hn::LoadU(d_tag, sed + ic + 1);
+
+                // wybór wiersza y0 oraz y1
+                auto row0_0 = hn::IfThenElse(up, a0, b0);
+                auto row0_1 = hn::IfThenElse(up, a1, b1);
+                auto row0_2 = hn::IfThenElse(up, a2, b2);
+                auto row1_0 = hn::IfThenElse(up, b0, c0);
+                auto row1_1 = hn::IfThenElse(up, b1, c1);
+                auto row1_2 = hn::IfThenElse(up, b2, c2);
+
+                // wybór kolumny x0 oraz x1
+                auto s00 = hn::IfThenElse(left, row0_0, row0_1);
+                auto s10 = hn::IfThenElse(left, row0_1, row0_2);
+                auto s01 = hn::IfThenElse(left, row1_0, row1_1);
+                auto s11 = hn::IfThenElse(left, row1_1, row1_2);
+
+                auto omfx = hn::Sub(v_one, fx);
+                auto omfy = hn::Sub(v_one, fy);
+
+                // kolejność mnożeń i dodawań zgodnie z wersją skalarną (faux pas wcześniej)
+                auto t00 = hn::Mul(hn::Mul(s00, omfx), omfy);
+                auto t10 = hn::Mul(hn::Mul(s10, fx), omfy);
+                auto t01 = hn::Mul(hn::Mul(s01, omfx), fy);
+                auto t11 = hn::Mul(hn::Mul(s11, fx), fy);
+                auto res = hn::Add(hn::Add(hn::Add(t00, t10), t01), t11);
+
+                hn::StoreU(hn::Max(v_zero, res), d_tag, sed_out + i);
+            }
+
+            for (; x < size - 1; x++) {
+                scalar(x);
+            }
+        } else {
+            for (int x = 1; x < size - 1; x++) {
+                scalar(x);
+            }
+        }
+
+        scalar(size - 1);
     }
 
     std::swap(sediment, sediment_new);
@@ -394,8 +580,8 @@ void PipeErosionOptimized::step_evaporation(std::vector<float>& terrain, int siz
         auto w = hn::Max(v_zero, hn::Mul(hn::LoadU(d_tag, water.data() + i), v_factor));
         auto s = hn::LoadU(d_tag, sediment.data() + i);
 
-        // gdzie woda != 0
-        auto below = hn::Lt(w, v_eps);
+        // gdzie woda != 0 oraz jest co osadzić, wcześniej był błąd
+        auto below = hn::And(hn::Lt(w, v_eps), hn::Gt(s, v_zero));
         auto t = hn::LoadU(d_tag, terrain.data() + i);
 
         // tam gdzie poniżej progu: terrain += sediment
@@ -412,7 +598,7 @@ void PipeErosionOptimized::step_evaporation(std::vector<float>& terrain, int siz
     // ogon - elementy które nie zmieściły się w pełnym bloku W
     for (int i = n_blocks * W; i < n; i++) {
         water[i] = std::max(0.0f, water[i] * factor);
-        if (water[i] < 1e-5f){
+        if (water[i] < 1e-5f && sediment[i] > 0.0f) {
             terrain[i] += sediment[i];
             sediment[i] = 0.0f;
         }
@@ -436,15 +622,19 @@ void PipeErosionOptimized::erode(Ref<Heightmap> heightmap, int num_iterations, c
     const int rain_every = std::max(1, config->get_rain_iterations());
     const float rain_dt = config->get_rain_rate() * config->get_dt();
 
+    // margines 0.99 gwarantuje, że dla komórek wewnętrznych nie aktywuje się ograniczenie pozycji do zakresu siatki, pominięte w wariancie cfl
+    const float courant = config->get_max_velocity() * config->get_dt() / config->get_pipe_length();
+    const bool cfl_ok = (courant <= 0.99f);
+
+    const hn::ScalableTag<float> d_tag;
+    const int W = static_cast<int>(hn::Lanes(d_tag));
+    const auto v_rain = hn::Set(d_tag, rain_dt);
+    const int n = size * size;
+    const int n_blocks = n / W;
+
     for (int iter = 0; iter < num_iterations; iter++) {
         if (iter % rain_every == 0) {
             // SIMD rain - Highway na płaskiej tablicy
-            const hn::ScalableTag<float> d_tag;
-            const int W = static_cast<int>(hn::Lanes(d_tag));
-            const auto v_rain = hn::Set(d_tag, rain_dt);
-            const int n = size * size;
-            const int n_blocks = n / W;
-
             #pragma omp parallel for schedule(static)
             for (int b = 0; b < n_blocks; b++) {
                 const int i = b * W;
@@ -457,7 +647,13 @@ void PipeErosionOptimized::erode(Ref<Heightmap> heightmap, int num_iterations, c
         step_flux(terrain, size, config);
         step_water(size, config);
         step_erosion_deposition(terrain, size, config);
-        step_sediment_transport(size, config);
+
+        if (cfl_ok) {
+            step_sediment_transport_cfl(size, config);
+        } else {
+            step_sediment_transport(size, config);
+        }
+        
         step_evaporation(terrain, size, config);
     }
 

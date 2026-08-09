@@ -13,7 +13,11 @@ env.Append(CPPPATH=["src/", "."])
 
 # for OpenMP and SIMD
 if env["platform"] == "windows":
-    env.Append(CCFLAGS=["/openmp", "/std:c++17"])
+    if env.get("use_mingw"):
+        env.Append(CCFLAGS=["-fopenmp", "-std=c++17", "-mavx2", "-mfma"])
+        env.Append(LINKFLAGS=["-fopenmp"])
+    else:
+        env.Append(CCFLAGS=["/openmp", "/std:c++17", "/arch:AVX2"])
     # highway downloaded by vcpkg:
     env.Append(CPPPATH=["C:/vcpkg/installed/x64-windows/include"])
 
@@ -32,7 +36,6 @@ sources = glob("src/**/*.cpp", recursive=True)
 #         print("Not including class reference as targeting a pre-4.2 baseline.")
 
 
-
 # here are all generated gdextension files
 folder = "build/addons/Erosion"
 # submodule (Godot example project)
@@ -41,14 +44,7 @@ project_folder = "godot_project/addons/Erosion"
 
 
 # build library 
-if env["platform"] == "macos":
-	file_name = "libErosion.{}.{}".format(env["platform"], env["target"])
-
-	library = env.SharedLibrary(
-		"{}/{}.framework/{}".format(folder, file_name, file_name),
-		source=sources
-	)
-else:
+if env["platform"] == "windows":
 	library = env.SharedLibrary(
 		"{}/libErosion{}{}"
 			.format(folder, env["suffix"], env["SHLIBSUFFIX"]),
@@ -94,20 +90,6 @@ if env["platform"] == "windows":
             os.path.join(project_folder, os.path.basename(exp_path)),
         ],
         source=[dll_path, lib_path, exp_path],
-        action=copy_files_action
-    )
-elif env["platform"] == "macos":
-    dylib_path = str(library[0])
-    lib_copy_example = env.Command(
-        target=os.path.join(project_folder, os.path.basename(dylib_path)),
-        source=dylib_path,
-        action=copy_files_action
-    )
-else:  # linux
-    so_path = str(library[0])
-    lib_copy_example = env.Command(
-        target=os.path.join(project_folder, os.path.basename(so_path)),
-        source=so_path,
         action=copy_files_action
     )
 

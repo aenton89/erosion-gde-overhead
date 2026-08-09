@@ -197,7 +197,12 @@ func load_fixture(map_size: int) -> void:
 func run_full_benchmark() -> void:
 	await run_benchmarks(PIP_IMPLS, "realtime_pipe")
 	await run_benchmarks(HYD_IMPLS, "realtime_particle")
+	
 	print("ALL REAL-TIME BENCHMARKS DONE 'N SAVED")
+	if Engine.is_editor_hint():
+		return
+	await get_tree().process_frame
+	get_tree().quit()
 
 func run_benchmarks(impls: Array[String], out_name: String, write_csv: bool = true) -> void:
 	if !validate():
@@ -208,6 +213,9 @@ func run_benchmarks(impls: Array[String], out_name: String, write_csv: bool = tr
 	var raw_path: String = realt_dir + "%s.csv" % out_name
 	var summary_path: String = realt_dir + "%s_summary.csv" % out_name
 	var P: = Engine.get_singleton("Profiler")
+	
+	P.set_thread_count(P.get_auto_thread_count())
+	P.print_environment()
 	
 	if write_csv:
 		ensure_dir(raw_path)
@@ -268,6 +276,10 @@ func run_preview_once() -> void:
 		return
 	
 	run_realtime = false
+	
+	var P: = Engine.get_singleton("Profiler")
+	P.set_thread_count(P.get_auto_thread_count())
+	P.print_environment()
 	
 	setup_erosion(active_impl)
 	var map_size: int = generator_settings.map_size

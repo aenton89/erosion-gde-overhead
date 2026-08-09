@@ -93,6 +93,8 @@ void PipeErosion::step_water(int size, const Ref<PipeErosionSettings>& cfg) {
     const float l = cfg->get_pipe_length();
     const float l2 = l * l;
     const float max_vel = cfg->get_max_velocity();
+    const float inv_l2 = dt / l2;
+    const float inv_2l = 1.0f / (2.0f * l);
 
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
@@ -107,13 +109,13 @@ void PipeErosion::step_water(int size, const Ref<PipeErosionSettings>& cfg) {
             float sum_out = flux_l[i] + flux_r[i] + flux_t[i] + flux_b[i];
 
             float d_prev = water[i];
-            float d_new = std::max(0.0f, d_prev + dt * (sum_in - sum_out) / l2);
+            float d_new = std::max(0.0f, d_prev + (sum_in - sum_out) * inv_l2);
             water[i] = d_new;
 
             float d_avg = (d_prev + d_new) * 0.5f;
             if (d_avg > 1e-4f) {
-                float u = (fin_l - flux_l[i] + flux_r[i] - fin_r) / (2.0f * l * d_avg);
-                float v = (fin_t - flux_t[i] + flux_b[i] - fin_b) / (2.0f * l * d_avg);
+                float u = (fin_l - flux_l[i] + flux_r[i] - fin_r) * inv_2l / d_avg;
+                float v = (fin_t - flux_t[i] + flux_b[i] - fin_b) * inv_2l / d_avg;
                 // FIX: clamp prędkości - bez tego przy prawie-zerowej wodzie prędkość eksploduje i sedyment transport robi dziury
                 vel_x[i] = std::max(-max_vel, std::min(max_vel, u));
                 vel_y[i] = std::max(-max_vel, std::min(max_vel, v));
@@ -153,7 +155,7 @@ void PipeErosion::step_erosion_deposition(std::vector<float>& terrain, int size,
             float dbdy = (terrain_prev[idx(x, yb, size)] - terrain_prev[idx(x, yt, size)]) / (float(yb - yt) * l);
 
             float g2 = dbdx * dbdx + dbdy * dbdy;
-            float sin_a = std::max(std::sqrt(g2) / std::sqrt(1.0f + g2), min_tilt);
+            float sin_a = std::max(min_tilt, std::sqrt(g2) / std::sqrt(1.0f + g2));
 
             float speed = std::sqrt(vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i]);
             float C = Kc * sin_a * speed;
@@ -179,8 +181,6 @@ void PipeErosion::step_sediment_transport(int size, const Ref<PipeErosionSetting
     const float dt = cfg->get_dt();
     const float l = cfg->get_pipe_length();
     const float size_max = float(size-1) - 1e-4f;
-
-    std::fill(sediment_new.begin(), sediment_new.end(), 0.0f);
 
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
@@ -233,12 +233,12 @@ void PipeErosion::erode(Ref<Heightmap> heightmap, int num_iterations, const Ref<
     std::vector<float> terrain(heightmap->data.ptr(), heightmap->data.ptr() + size * size);
 
     const int rain_every = std::max(1, config->get_rain_iterations());
-    const float rain = config->get_rain_rate();
+    const float rain_dt = config->get_rain_rate() * config->get_dt();
 
     for (int iter = 0; iter < num_iterations; iter++) {
         if (iter % rain_every == 0) {
             for (int i = 0; i < size * size; i++){
-                water[i] += rain * config->get_dt();
+                water[i] += rain_dt;
             }
         }
 

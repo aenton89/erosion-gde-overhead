@@ -2,10 +2,10 @@
 
 [ext_resource type="Script" uid="uid://wobbplms6biw" path="res://scripts/cpp_way/2d_cpp.gd" id="1_pj6p1"]
 [ext_resource type="PerlinNoiseSettings" uid="uid://bp1jd42kp5q3d" path="res://resources/algorithms/ptg/perlin_noise_settings.tres" id="2_snfgr"]
-[ext_resource type="Texture2D" path="res://assets/perlin_terrain.png" id="4_7xrcr"]
+[ext_resource type="Texture2D" uid="uid://bea23yhh5x48c" path="res://assets/perlin_terrain.png" id="4_7xrcr"]
 [ext_resource type="Script" uid="uid://dfbxel6scelfn" path="res://scripts/controls.gd" id="4_ux5ei"]
 
-[sub_resource type="Image" id="Image_h6ew2"]
+[sub_resource type="Image" id="Image_7xrcr"]
 data = {
 "data": PackedByteArray("AAAAAAAAJCQkJCQkSEhISEhIbW1tbW1tkZGRkZGRtra2tra22tra2tra////////AAAAAAAAJCQkJCQkSEhISEhIbW1tbW1tkZGRkZGRtra2tra22tra2tra////////"),
 "format": "RGB8",
@@ -15,7 +15,7 @@ data = {
 }
 
 [sub_resource type="ImageTexture" id="ImageTexture_0hpd7"]
-image = SubResource("Image_h6ew2")
+image = SubResource("Image_7xrcr")
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_2131l"]
 texture = SubResource("ImageTexture_0hpd7")

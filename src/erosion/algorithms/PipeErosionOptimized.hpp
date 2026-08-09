@@ -52,6 +52,8 @@ private:
     void step_water(int size, const Ref<PipeErosionSettings>& cfg);
     void step_erosion_deposition(std::vector<float>& terrain, int size, const Ref<PipeErosionSettings>& cfg);
     void step_sediment_transport(int size, const Ref<PipeErosionSettings>& cfg);
+    // też 4. krok, ale szybszy, zwłaszcza pod SIMD, natomiast wymaga spełnienia CFL
+    void step_sediment_transport_cfl(int size, const Ref<PipeErosionSettings>& cfg);
     void step_evaporation(std::vector<float>& terrain,int size, const Ref<PipeErosionSettings>& cfg);
 
     inline int idx(int x, int y, int size) const { 

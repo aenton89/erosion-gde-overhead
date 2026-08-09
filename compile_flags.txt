@@ -3,3 +3,5 @@
 -Igodot-cpp/gdextension
 -Igodot-cpp/gen/include
 -Igodot-cpp/include
+-mavx2
+-mfma

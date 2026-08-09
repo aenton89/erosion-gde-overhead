@@ -8,8 +8,15 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
 
+#include <hwy/highway.h>
+#include <hwy/targets.h>
+
+#define NOMINMAX
 #include <windows.h>
+
 #include <psapi.h>
 #include <intrin.h>
 // żeby się te cosie od pamięci na windowsie automatycznie załączały
@@ -19,6 +26,7 @@
 
 #include <omp.h>
 
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -163,7 +171,7 @@ namespace tp {
         unsigned int n_ex_ids = static_cast<unsigned int>(cpui[0]);
 
         if (n_ex_ids >= 0x80000004) {
-            __cpuid(reinterpret_cast<int*>(brand + 0),  0x80000002);
+            __cpuid(reinterpret_cast<int*>(brand + 0), 0x80000002);
             __cpuid(reinterpret_cast<int*>(brand + 16), 0x80000003);
             __cpuid(reinterpret_cast<int*>(brand + 32), 0x80000004);
         }
@@ -177,13 +185,60 @@ namespace tp {
         return std::string(s.utf8().get_data());
     }
 
+    inline std::string get_simd_target() {
+        return std::string(hwy::TargetName(HWY_STATIC_TARGET));
+    }
+
+    inline int get_simd_lanes() {
+        const hwy::HWY_NAMESPACE::ScalableTag<float> d;
+        return static_cast<int>(hwy::HWY_NAMESPACE::Lanes(d));
+    }
+
+    // liczba wątków sprzed pierwszego wywołania omp_set_num_threads, bez tego zwraca ostatnio ustawioną wartość, a nie możliwości maszyny
+    inline int get_initial_max_threads() {
+        static const int v = omp_get_max_threads();
+        return v;
+    }
+
+    // rdzenie fizyczne - ma znaczenie dla interpretacji skalowania obciążeń ograniczonych przepustowością pamięci
+    inline int get_physical_cores() {
+        static const int cached = []() -> int {
+            DWORD len = 0;
+            GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
+            if (len == 0)
+                return 0;
+
+            std::vector<char> buf(len);
+            auto* first = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buf.data());
+            if (!GetLogicalProcessorInformationEx(RelationProcessorCore, first, &len))
+                return 0;
+
+            int count = 0;
+            char* p = buf.data();
+            while (p < buf.data() + len) {
+                auto* info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(p);
+                if (info->Relationship == RelationProcessorCore)
+                    count++;
+                
+                p += info->Size;
+            }
+            return count;
+        }();
+        return cached;
+    }
+
     struct EnvironmentInfo {
         std::string cpu_brand;
         
+        int physical_cores = 0;
         int logical_cores = 0;
         int omp_max_threads = 0;
 
+        std::string simd_target;
+        int simd_lanes = 0;
+
         std::string build_type;
+
         std::string godot_version;
     };
 
@@ -191,26 +246,36 @@ namespace tp {
         EnvironmentInfo info;
 
         info.cpu_brand = get_cpu_brand();
+        
+        info.physical_cores = get_physical_cores();
         info.logical_cores = static_cast<int>(std::thread::hardware_concurrency());
-        info.omp_max_threads = omp_get_max_threads();
-        info.godot_version = get_godot_version();
+        info.omp_max_threads = get_initial_max_threads();
+        
+        info.simd_target = get_simd_target();
+        info.simd_lanes = get_simd_lanes();
+
         #ifdef _DEBUG
             info.build_type = "debug";
         #else
             info.build_type = "release";
         #endif
 
+        info.godot_version = get_godot_version();
+
         return info;
     }
 
-    inline std::string environment_info_as_header(const EnvironmentInfo& info, int active_threads) {
+    inline std::string environment_info_as_header(const EnvironmentInfo& info) {
         std::ostringstream oss;
         oss << "# cpu_brand=" << info.cpu_brand << "\n"
+            << "# physical_cores=" << info.physical_cores << "\n"
             << "# logical_cores=" << info.logical_cores << "\n"
             << "# omp_max_threads=" << info.omp_max_threads << "\n"
-            << "# active_threads=" << active_threads << "\n"
+            << "# simd_target=" << info.simd_target << "\n"
+            << "# simd_lanes=" << info.simd_lanes << "\n"
             << "# build_type=" << info.build_type << "\n"
             << "# godot_version=" << info.godot_version << "\n";
+        
         return oss.str();
     }
 
@@ -339,6 +404,10 @@ class ProfilerGD : public godot::Object {
     GDCLASS(ProfilerGD, godot::Object)
 
 public:
+    ProfilerGD() { 
+        tp::get_initial_max_threads(); 
+    }
+    
     void set_map_size(int w, int h) {
         tp::get_map_w().store(w);
         tp::get_map_h().store(h);
@@ -428,6 +497,66 @@ public:
         return static_cast<int>(std::thread::hardware_concurrency());
     }
 
+    int get_auto_thread_count() {
+        return tp::get_initial_max_threads();
+    }
+
+    int get_physical_core_count() {
+        return tp::get_physical_cores();
+    }
+
+    godot::String get_simd_target() {
+        return godot::String(tp::get_simd_target().c_str());
+    }
+
+    int get_simd_lanes() {
+        return tp::get_simd_lanes();
+    }
+
+    // seria liczb wątków do przebiegu skalowania: 1, 2, a następnie co dwa, aż do liczby procesorów logicznych
+    godot::PackedInt32Array get_auto_thread_counts() {
+        const int max_t = tp::get_initial_max_threads();
+        const int phys = tp::get_physical_cores();
+
+        std::vector<int> v;
+        v.push_back(1);
+        for (int n = 2; n <= max_t; n += 2){
+            v.push_back(n);
+        }
+        // rdzenie fizyczne i logiczne zawsze w serii, nawet gdy nieparzyste
+        if (phys > 0 && phys <= max_t){
+            v.push_back(phys);
+        }
+        v.push_back(max_t);
+
+        std::sort(v.begin(), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
+
+        godot::PackedInt32Array out;
+        for (int n : v){
+            out.push_back(n);
+        }
+        return out;
+    }
+
+    void print_environment() {
+        auto info = tp::get_environment_info();
+        godot::UtilityFunctions::print(
+            "Profiler: ", info.cpu_brand.c_str(),
+            " threads physical/logical: ", info.physical_cores, "/", info.logical_cores,
+            " OpenMP max: ", info.omp_max_threads,
+            " SIMD: ", info.simd_target.c_str(), " (", info.simd_lanes, " lanes)",
+            " build: ", info.build_type.c_str()
+        );
+
+        #ifdef __AVX512F__
+            godot::UtilityFunctions::print("macro __AVX512F__: defined");
+        #else
+            godot::UtilityFunctions::print("macro __AVX512F__: missing");
+        #endif
+            godot::UtilityFunctions::print("HWY_BROKEN_TARGETS: ", (int)HWY_BROKEN_TARGETS, ", HWY_BASELINE_TARGETS: ", (int)HWY_BASELINE_TARGETS);
+    }
+
 
 
     // dla nowego pliku wyników: metadane środowiska + nagłówek kolumn, wywołane raz na plik przed save_csv
@@ -439,7 +568,7 @@ public:
             return false;
 
         auto info = tp::get_environment_info();
-        f << tp::environment_info_as_header(info, omp_get_max_threads()) << column_header.utf8().get_data() << "\n";
+        f << tp::environment_info_as_header(info) << column_header.utf8().get_data() << "\n";
         
         return true;
     }
@@ -464,6 +593,12 @@ protected:
         ClassDB::bind_method(D_METHOD("get_max_threads"), &ProfilerGD::get_max_threads);
         ClassDB::bind_method(D_METHOD("get_hardware_concurrency"), &ProfilerGD::get_hardware_concurrency);
         ClassDB::bind_method(D_METHOD("begin_results_file", "path", "column_header"), &ProfilerGD::begin_results_file);
+        ClassDB::bind_method(D_METHOD("get_auto_thread_count"), &ProfilerGD::get_auto_thread_count);
+        ClassDB::bind_method(D_METHOD("get_auto_thread_counts"), &ProfilerGD::get_auto_thread_counts);
+        ClassDB::bind_method(D_METHOD("get_physical_core_count"), &ProfilerGD::get_physical_core_count);
+        ClassDB::bind_method(D_METHOD("get_simd_target"), &ProfilerGD::get_simd_target);
+        ClassDB::bind_method(D_METHOD("get_simd_lanes"), &ProfilerGD::get_simd_lanes);
+        ClassDB::bind_method(D_METHOD("print_environment"), &ProfilerGD::print_environment);
     }
 
 private:

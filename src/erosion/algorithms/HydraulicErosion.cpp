@@ -101,7 +101,8 @@ void HydraulicErosion::erode(Ref<Heightmap> heightmap, int num_iterations, const
         rng.seed(config->get_seed());
         current_seed = config->get_seed();
     }
-    std::uniform_real_distribution<float> dist(0.0f, float(map_size - 1));
+    // zawężony prawy koniec - interpolacja odczytuje sąsiada o indeksie o jeden większym + pierwsze wywołanie calc_height_and_gradient poprzedza sprawdzenie granic
+    std::uniform_real_distribution<float> dist(0.0f, float(map_size - 1) - 1e-4f);
 
     for (int iter = 0; iter < num_iterations; iter++) {
         float pos_x = dist(rng);

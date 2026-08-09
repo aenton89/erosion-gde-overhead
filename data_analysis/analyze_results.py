@@ -58,6 +58,13 @@ CORRECTNESS_LABELS = {
     "gds": "pipe_gds",
 }
 
+# rozbieżność w funkcji liczby iteracji - pliki div_{label}_{iters}.bin
+DIVERGENCE_LABELS = {
+    "optimized": "optimized",
+    "gds": "gds",
+}
+DIVERGENCE_BASELINE = "baseline"
+
 # analityczne wyliczenie bajtow buforow - particle ma nieregularny brush (vector<vector<>>), wiec brak wzoru (ale chyba jednak zbędne)
 ANALYTICAL_BYTES = {
     "pipe": lambda size: 11 * size * size * 4,
@@ -230,6 +237,72 @@ def check_numerical_correctness() -> None:
             _compare_terrains("optimized", terrains["optimized"], "baseline", terrains["baseline"])
         if "gds" in terrains:
             _compare_terrains("gds", terrains["gds"], "baseline", terrains["baseline"])
+
+def plot_divergence_vs_iterations() -> None:
+    print("\n=== DIVERGENCE vs ITERATIONS (pipe) ===")
+    pattern = fixtures_file(f"div_{DIVERGENCE_BASELINE}_*.bin")
+    iters_list = []
+    for p in glob.glob(pattern):
+        stem = os.path.basename(p).replace(f"div_{DIVERGENCE_BASELINE}_", "").replace(".bin", "")
+        if stem.isdigit():
+            iters_list.append(int(stem))
+    iters_list.sort()
+
+    if not iters_list:
+        print(f" (skipped - missing files: div_{DIVERGENCE_BASELINE}_*.bin in {FIXTURES_DIR})")
+        return
+
+    series = {impl: {"iters": [], "max": [], "rmse": []} for impl in DIVERGENCE_LABELS}
+    terrain_range = None
+
+    for it in iters_list:
+        base_path = fixtures_file(f"div_{DIVERGENCE_BASELINE}_{it}.bin")
+        if not os.path.exists(base_path):
+            continue
+        base = load_terrain_binary(base_path)
+        if terrain_range is None:
+            terrain_range = float(base.max() - base.min())
+
+        for impl, label in DIVERGENCE_LABELS.items():
+            p = fixtures_file(f"div_{label}_{it}.bin")
+            if not os.path.exists(p):
+                continue
+            arr = load_terrain_binary(p)
+            if arr.shape != base.shape:
+                continue
+            diff = arr - base
+            series[impl]["iters"].append(it)
+            series[impl]["max"].append(float(np.max(np.abs(diff))))
+            series[impl]["rmse"].append(float(np.sqrt(np.mean(diff ** 2))))
+            print(f"  iters={it:5d}  {impl} vs baseline:  max|delta|={series[impl]['max'][-1]:.3e}")
+
+    fig, ax = plt.subplots()
+    for impl in DIVERGENCE_LABELS:
+        s = series[impl]
+        if not s["iters"]:
+            continue
+        style = IMPL_STYLE.get(impl, {})
+        ax.plot(s["iters"], s["max"], marker="o", label=f"{impl} vs baseline", **style)
+
+    # poziom odniesienia: amplituda terenu - powyżej niej różnice są wizualnie istotne
+    if terrain_range:
+        ax.axhline(terrain_range, color="#888888", linestyle=":", linewidth=1.0)
+        ax.text(iters_list[0], terrain_range * 1.15, "amplituda terenu", fontsize=8, color="#666666")
+
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.set_xticks(iters_list)
+    ax.set_xticklabels(iters_list)
+    ax.set_xlabel("Liczba iteracji")
+    ax.set_ylabel(r"max$|\Delta|$ wysokości")
+    ax.set_title("pipe: narastanie rozbieżności numerycznej")
+    ax.legend()
+
+    fig.tight_layout()
+    out = output_file("pipe_divergence_vs_iterations.png")
+    fig.savefig(out)
+    print(f"[pipe] saved - {out}")
+    plt.show()
 
 
 
@@ -677,6 +750,7 @@ def main() -> None:
     apply_style()
 
     check_numerical_correctness()
+    plot_divergence_vs_iterations()
     analyze_overhead()
     report_analytical_memory()
 

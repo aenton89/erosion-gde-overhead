@@ -88,8 +88,8 @@ func erode(hmap: HeightmapGDS, num_iterations: int, config: HydraulicErosionSett
 		_curr_seed = config.seed
 	
 	for _iter in range(num_iterations):
-		var pos_x: float = rng.randf_range(0.0, float(map_size - 1))
-		var pos_y: float = rng.randf_range(0.0, float(map_size - 1))
+		var pos_x: float = rng.randf_range(0.0, float(map_size - 1) - 0.0001)
+		var pos_y: float = rng.randf_range(0.0, float(map_size - 1) - 0.0001)
 		var dir_x: float = 0.0
 		var dir_y: float = 0.0
 		var speed: float = config.initial_speed
@@ -128,8 +128,7 @@ func erode(hmap: HeightmapGDS, num_iterations: int, config: HydraulicErosionSett
 			var sediment_capacity: float = maxf(-delta_height * speed * water * config.sediment_capacity_factor, config.min_sediment_capacity)
 			
 			if sediment > sediment_capacity or delta_height > 0.0:
-				var amount: float = delta_height if delta_height > 0.0 else (sediment - sediment_capacity) * config.deposit_speed
-				amount = minf(amount, sediment)
+				var amount: float = minf(delta_height, sediment) if delta_height > 0.0 else (sediment - sediment_capacity) * config.deposit_speed
 				sediment -= amount
 				
 				map[droplet_idx] += amount * (1.0 - cell_offset_x) * (1.0 - cell_offset_y)
@@ -151,7 +150,10 @@ func erode(hmap: HeightmapGDS, num_iterations: int, config: HydraulicErosionSett
 			water *= (1.0 - config.evaporate_speed)
 	
 	# zapis z powrotem do heightmapy
-	for y in range(map_size):
-		for x in range(map_size):
-			#hmap.set_value(x, y, maxf(0.0, map[y * map_size + x]))
-			hmap.data[y * map_size + x] = maxf(0.0, map[y * map_size + x])
+	for i in range(map_size * map_size):
+		hmap.data[i] = maxf(0.0, map[i])
+	
+	#for y in range(map_size):
+		#for x in range(map_size):
+			##hmap.set_value(x, y, maxf(0.0, map[y * map_size + x]))
+			#hmap.data[y * map_size + x] = maxf(0.0, map[y * map_size + x])

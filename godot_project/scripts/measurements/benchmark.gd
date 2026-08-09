@@ -23,14 +23,21 @@ class_name Benchmark
 @export_category("Run Settings")
 @export var repeats: int = 10
 @export var output_dir: String = "../data_analysis/data/"
-@export var thread_counts: Array[int] = [1, 2, 4, 6]
+@export_subgroup("Threads")
+@export var auto_thread_counts: bool = true
+@export var thread_counts: Array[int] = [1, 2, 4, 6, 8, 10, 12]
 @export var memory_thread_count: int = 6
+@export_subgroup("Time")
 @export var measure_timing: bool = true
+@export_subgroup("Memory")
 @export var measure_memory: bool = false
 @export var memory_sample_interval_ms: int = 2
 @export_subgroup("Overhead Measures")
 @export var overhead_n: int = 1000000
-@export var overhead_arr_sizes: Array = [16*16, 32*32, 64*64, 128*128, 256*256, 512*512]
+@export var overhead_arr_sizes: Array = [32*32, 64*64, 128*128, 256*256, 512*512]
+@export_subgroup("Divergence")
+@export var divergence_map_size: int = 128
+@export var divergence_iterations: Array[int] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 
 @export_category("Run")
 @export_subgroup("Main Settings")
@@ -46,6 +53,7 @@ class_name Benchmark
 @export var run_hydraulic_gds: bool = false : set = on_run_hydraulic_gds
 @export var run_overhead: bool = false : set = on_run_overhead
 @export var run_correctness: bool = false : set = on_run_correctness
+@export var run_divergence: bool = false : set = on_run_divergence
 
 
 var overhead_msr: OverheadMeasure
@@ -60,13 +68,13 @@ func _ready() -> void:
 	if !auto_run_on_launch:
 		return
 	
-	run_both_benchmarks()
+	await run_both_benchmarks()
 
 
 
 func on_run_full(v: bool) -> void:
 	if v:
-		run_both_benchmarks()
+		await run_both_benchmarks()
 		run_full = false
 
 func on_run_benchmarks(v: bool) -> void:
@@ -114,6 +122,11 @@ func on_run_correctness(v: bool) -> void:
 		run_correctness_check()
 		run_correctness = false
 
+func on_run_divergence(v: bool) -> void:
+	if v:
+		run_divergence_check()
+		run_divergence = false
+
 
 
 func run_both_benchmarks() -> void:
@@ -126,6 +139,10 @@ func run_both_benchmarks() -> void:
 	measure_timing = !measure_timing
 	
 	print("BOTH BENCHMARKS DONE 'N SAVED")
+	if Engine.is_editor_hint():
+		return
+	await get_tree().process_frame
+	get_tree().quit()
 
 func run_benchmark() -> void:
 	if !validate(): 
@@ -133,6 +150,7 @@ func run_benchmark() -> void:
 	
 	print("=" .repeat(60))
 	print("TERRAIN BENCHMARK START")
+	Engine.get_singleton("Profiler").print_environment()
 	print("=" .repeat(60))
 	
 	run_single("pipe_optimized")
@@ -144,6 +162,7 @@ func run_benchmark() -> void:
 	if !measure_memory:
 		run_overhead_benchmark(512)
 		run_correctness_check()
+		run_divergence_check()
 	
 	print("=" .repeat(60))
 	print("BENCHMARK DONE")
@@ -170,9 +189,9 @@ func run_single(algo: String) -> void:
 	# wątki tylko dla zoptymalizowanej wersji
 	var threads_to_test: Array 
 	if algo == "pipe_optimized" and measure_timing:
-		threads_to_test = thread_counts
+		threads_to_test = resolve_thread_counts()
 	elif algo == "pipe_optimized":
-		threads_to_test = [memory_thread_count]
+		threads_to_test = [resolve_memory_thread_count()]
 	else:
 		threads_to_test = [1]
 	
@@ -298,11 +317,39 @@ func run_correctness_check() -> void:
 		
 		var hm_gds: HeightmapGDS = load_heightmap_for("pipe_gds", map_size)
 		var gds: PipeErosionGDS = PipeErosionGDS.new()
+		pipe_settings_gds = PipeErosionSettingsGDS.new()
 		pipe_settings_gds.copy_from_cpp(pipe_settings)
 		gds.erode(hm_gds, iters, pipe_settings_gds)
 		Helpers.save_terrain_binary(correctness_path("pipe_gds", map_size), hm_gds.get_size(), hm_gds.get_data())
 		
 		print(" map=%dx%d done" % [map_size, map_size])
+
+func run_divergence_check() -> void:
+	if !validate():
+		return
+	
+	print("-".repeat(50))
+	print("Divergence check: map=%dx%d" % [divergence_map_size, divergence_map_size])
+	
+	for iters in divergence_iterations:
+		var hm_base: Heightmap = load_heightmap_for("pipe_cpp", divergence_map_size)
+		var base: PipeErosion = PipeErosion.new()
+		base.erode(hm_base, iters, pipe_settings)
+		Helpers.save_terrain_binary(divergence_path("baseline", iters), hm_base.get_size(), hm_base.get_data())
+		
+		var hm_opt: Heightmap = load_heightmap_for("pipe_optimized", divergence_map_size)
+		var opt: PipeErosionOptimized = PipeErosionOptimized.new()
+		opt.erode(hm_opt, iters, pipe_settings)
+		Helpers.save_terrain_binary(divergence_path("optimized", iters), hm_opt.get_size(), hm_opt.get_data())
+		
+		var hm_gds: HeightmapGDS = load_heightmap_for("pipe_gds", divergence_map_size)
+		var gds: PipeErosionGDS = PipeErosionGDS.new()
+		pipe_settings_gds = PipeErosionSettingsGDS.new()
+		pipe_settings_gds.copy_from_cpp(pipe_settings)
+		gds.erode(hm_gds, iters, pipe_settings_gds)
+		Helpers.save_terrain_binary(divergence_path("gds", iters), hm_gds.get_size(), hm_gds.get_data())
+		
+		print(" iters=%d done" % iters)
 
 func generate_terrain_fixtrs() -> void:
 	ensure_dir(terrain_fixtrs_path(0))
@@ -339,6 +386,30 @@ func load_heightmap_for(algo: String, map_size: int) -> Object:
 func is_pipe(algo: String) -> bool:
 	return algo.begins_with("pipe")
 
+# liczby wątków do przebiegu skalowania - z profilera albo z ustawienia ręcznego
+func resolve_thread_counts() -> Array:
+	if !auto_thread_counts:
+		return thread_counts
+	var P: = Engine.get_singleton("Profiler")
+	if !P:
+		return thread_counts
+	var auto_counts: PackedInt32Array = P.get_auto_thread_counts()
+	if auto_counts.is_empty():
+		return thread_counts
+	return Array(auto_counts)
+
+# pojedyncza liczba wątków dla pomiarów pamięci - domyślnie rdzenie fizyczne
+func resolve_memory_thread_count() -> int:
+	if !auto_thread_counts:
+		return memory_thread_count
+	var P: = Engine.get_singleton("Profiler")
+	if !P:
+		return memory_thread_count
+	var phys: int = P.get_physical_core_count()
+	return phys if phys > 0 else P.get_auto_thread_count()
+
+
+
 func times_path(algo: String) -> String:
 	var base: String = ProjectSettings.globalize_path("res://") + output_dir + "times/"
 	return base + "%s_times.csv" % algo
@@ -358,6 +429,10 @@ func terrain_fixtrs_path(map_size: int) -> String:
 func correctness_path(label: String, map_size: int) -> String:
 	var base: String = ProjectSettings.globalize_path("res://") + output_dir + "fixtures/"
 	return base + "%s_terrain_%d.bin" % [label, map_size]
+
+func divergence_path(label: String, iters: int) -> String:
+	var base: String = ProjectSettings.globalize_path("res://") + output_dir + "fixtures/"
+	return base + "div_%s_%d.bin" % [label, iters]
 
 func ensure_dir(path: String) -> void:
 	var dir: String = path.get_base_dir()
