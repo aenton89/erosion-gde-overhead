@@ -86,6 +86,11 @@ IMPL_STYLE = {
     "optimized": {"color": "#3C9D6B", "linestyle": "-"},
 }
 
+ITERATIONS = {
+    "pipe": {32: 2, 64: 8, 128: 32, 256: 128, 512: 512},
+    "particle": {32: 1250, 64: 5000, 128: 20000, 256: 80000, 512: 320000},
+}
+
 
 
 # ŚCIEŻKI PER KATEGORIA
@@ -444,8 +449,9 @@ def plot_time_scaling(algo: str) -> None:
         return
     agg = _agg_timing(df).copy()
     agg["cells"] = agg["map_width"].astype(float) ** 2
-    agg["ns_per_cell"] = agg["mean_us"] * 1000.0 / agg["cells"]
-    _plot_vs_mapsize(algo, agg, "ns_per_cell", "Time per cell [ns]", "time per cell vs map size (scaling)", f"{algo}_time_scaling", unit_divisor=1.0)
+    agg["iters"] = agg["map_width"].map(ITERATIONS[algo]).astype(float)
+    agg["ns_per_cell"] = agg["mean_us"] * 1000.0 / (agg["cells"] * agg["iters"])
+    _plot_vs_mapsize(algo, agg, "ns_per_cell", "Time per cell and iteration [ns]", "time per cell and iteration vs map size (scaling)", f"{algo}_time_scaling", unit_divisor=1.0)
 
 
 # 3.3. PRZYŚPIESZENIE
