@@ -91,7 +91,33 @@ ITERATIONS = {
     "particle": {32: 1250, 64: 5000, 128: 20000, 256: 80000, 512: 320000},
 }
 
+# zamiana na polskie nazwy na wykresach, xd
+IMPL_LABEL = {
+    "baseline": "C++ referencyjna",
+    "gds": "GDScript",
+    "optimized": "C++ zoptymalizowana",
+}
 
+ALGO_LABEL = {
+    "pipe": "m. przepływowy",
+    "particle": "m. cząsteczkowy",
+}
+
+
+
+def impl_label(impl: str) -> str:
+    return IMPL_LABEL.get(impl, impl)
+
+def algo_label(algo: str) -> str:
+    return ALGO_LABEL.get(algo, algo)
+
+def threads_label(n) -> str:
+    n = int(n)
+    if n == 1:
+        return "1 wątek"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} wątki"
+    return f"{n} wątków"
 
 # ŚCIEŻKI PER KATEGORIA
 def times_file(name: str) -> str:
@@ -151,6 +177,22 @@ def _color_for(idx: int) -> str:
 def _plain_y_axis(ax) -> None:
     ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
     ax.ticklabel_format(style="plain", axis="y")
+
+# dwa warianty tego samego wykresu (liniowy + logarytmiczny) obok siebie
+def save_linear_log_pair(draw, filename_stem: str, suptitle: str, tag: str = "") -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for ax, log_variant in zip(axes, (False, True)):
+        draw(ax, log_variant)
+        ax.set_title("skala liniowa" if not log_variant else "skala log.")
+    # ta sama wielkość co po lewej
+    axes[1].set_ylabel("")
+    fig.suptitle(suptitle, fontweight="bold")
+    fig.tight_layout()
+    out = output_file(f"{filename_stem}_combined.png")
+    fig.savefig(out)
+    print(f"[{tag}] saved - {out}")
+    plt.show()
+    plt.close(fig)
 
 
 
@@ -279,7 +321,7 @@ def plot_divergence_vs_iterations() -> None:
             series[impl]["iters"].append(it)
             series[impl]["max"].append(float(np.max(np.abs(diff))))
             series[impl]["rmse"].append(float(np.sqrt(np.mean(diff ** 2))))
-            print(f"  iters={it:5d}  {impl} vs baseline:  max|delta|={series[impl]['max'][-1]:.3e}")
+            print(f"  iters={it:5d} {impl} vs baseline:  max|delta|={series[impl]['max'][-1]:.3e}")
 
     fig, ax = plt.subplots()
     for impl in DIVERGENCE_LABELS:
@@ -287,7 +329,7 @@ def plot_divergence_vs_iterations() -> None:
         if not s["iters"]:
             continue
         style = IMPL_STYLE.get(impl, {})
-        ax.plot(s["iters"], s["max"], marker="o", label=f"{impl} vs baseline", **style)
+        ax.plot(s["iters"], s["max"], marker="o", label=f"{impl_label(impl)} względem referencyjnej", **style)
 
     # poziom odniesienia: amplituda terenu - powyżej niej różnice są wizualnie istotne
     if terrain_range:
@@ -300,7 +342,7 @@ def plot_divergence_vs_iterations() -> None:
     ax.set_xticklabels(iters_list)
     ax.set_xlabel("Liczba iteracji")
     ax.set_ylabel(r"max$|\Delta|$ wysokości")
-    ax.set_title("pipe: narastanie rozbieżności numerycznej")
+    ax.set_title(f"{algo_label('pipe')}: narastanie rozbieżności numerycznej")
     ax.legend()
 
     fig.tight_layout()
@@ -308,6 +350,7 @@ def plot_divergence_vs_iterations() -> None:
     fig.savefig(out)
     print(f"[pipe] saved - {out}")
     plt.show()
+    plt.close(fig)
 
 
 
@@ -368,70 +411,76 @@ def plot_time_vs_threads(algo: str) -> None:
     opt_threads = sorted(sub[sub["impl"] == "optimized"]["threads_used"].unique())
     x_lo, x_hi = (min(opt_threads), max(opt_threads)) if len(opt_threads) > 1 else DEFAULT_THREAD_RANGE
 
-    for log_variant in (False, True):
-        fig, ax = plt.subplots()
+    def draw(ax, log_variant: bool) -> None:
         for impl, g in sub.groupby("impl"):
             style = IMPL_STYLE.get(impl, {"color": "#4C4C4C", "linestyle": "-"})
             if impl == "optimized" and len(g) > 1:
                 g = g.sort_values("threads_used")
-                ax.plot(g["threads_used"], g["mean_us"] / 1000.0, marker="o", color=style["color"], linestyle=style["linestyle"], label=impl)
+                ax.plot(g["threads_used"], g["mean_us"] / 1000.0, marker="o", color=style["color"], linestyle=style["linestyle"], label=impl_label(impl))
             else:
                 ref = g["mean_us"].mean() / 1000.0
-                ax.hlines(ref, x_lo, x_hi, color=style["color"], linestyles=style["linestyle"], label=f"{impl} (1 watek)")
+                ax.hlines(ref, x_lo, x_hi, color=style["color"], linestyles=style["linestyle"], label=f"{impl_label(impl)} ({threads_label(1)})")
 
-        ax.set_xlabel("Thread count")
-        ax.set_ylabel("Time [ms]")
-    
+        ax.set_xlabel("Liczba wątków")
+        ax.set_ylabel("Czas [ms]")
+
         if log_variant:
             ax.set_yscale("log")
-            suffix, title = "log", f"{algo}: time vs thread count (map {max_size}x{max_size}) (log scale)"
+            ax.set_title(f"{algo_label(algo)}: czas w funkcji liczby wątków, {max_size}x{max_size}, skala log.")
         else:
             _plain_y_axis(ax)
-            suffix, title = "linear", f"{algo}: time vs thread count (map {max_size}x{max_size})"
-        
-        ax.set_title(title)
+            ax.set_title(f"{algo_label(algo)}: czas w funkcji liczby wątków, {max_size}x{max_size}")
         ax.legend()
 
+    for log_variant in (False, True):
+        fig, ax = plt.subplots()
+        draw(ax, log_variant)
         fig.tight_layout()
-        out = output_file(f"{algo}_time_vs_threads_{suffix}.png")
+        out = output_file(f"{algo}_time_vs_threads_{'log' if log_variant else 'linear'}.png")
         fig.savefig(out)
         print(f"[{algo}] saved - {out}")
         plt.show()
+        plt.close(fig)
+
+    save_linear_log_pair(draw, f"{algo}_time_vs_threads", f"{algo_label(algo)}: czas w funkcji liczby wątków, {max_size}x{max_size}", algo)
 
 
 # 3.2. CZAS vs ROZMIAR MAPY oraz SKALOWANIE (ns/komorke) - liniowo i logarytmicznie
 def _plot_vs_mapsize(algo: str, agg, y_col: str, y_label: str, title_suffix: str, filename_stem: str, unit_divisor: float = 1.0) -> None:
     sizes = sorted(agg["map_width"].unique())
 
-    for log_variant in (False, True):
-        fig, ax = plt.subplots()
+    def draw(ax, log_variant: bool) -> None:
         for impl, g in agg.groupby("impl"):
             best = g["threads_used"].max()
             gg = g[g["threads_used"] == best].sort_values("map_width")
-            label = f"optimized ({best} w.)" if impl == "optimized" else impl
+            label = f"{impl_label(impl)} ({threads_label(best)})" if impl == "optimized" else impl_label(impl)
             ax.plot(gg["map_width"], gg[y_col] / unit_divisor, marker="o", label=label)
 
         ax.set_xscale("log", base=2)
         ax.set_xticks(sizes)
         ax.set_xticklabels(sizes)
-        ax.set_xlabel("Map size (side)")
+        ax.set_xlabel("Rozmiar mapy (bok)")
         ax.set_ylabel(y_label)
 
         if log_variant:
             ax.set_yscale("log")
-            suffix, title = "log", f"{algo}: {title_suffix} (log scale)"
+            ax.set_title(f"{algo_label(algo)}: {title_suffix}, skala log.")
         else:
             _plain_y_axis(ax)
-            suffix, title = "linear", f"{algo}: {title_suffix}"
-
-        ax.set_title(title)
+            ax.set_title(f"{algo_label(algo)}: {title_suffix}")
         ax.legend()
 
+    for log_variant in (False, True):
+        fig, ax = plt.subplots()
+        draw(ax, log_variant)
         fig.tight_layout()
-        out = output_file(f"{filename_stem}_{suffix}.png")
+        out = output_file(f"{filename_stem}_{'log' if log_variant else 'linear'}.png")
         fig.savefig(out)
         print(f"[{algo}] saved - {out}")
         plt.show()
+        plt.close(fig)
+
+    save_linear_log_pair(draw, filename_stem, f"{algo_label(algo)}: {title_suffix}", algo)
 
 def plot_time_vs_mapsize(algo: str) -> None:
     df = load_timing(algo)
@@ -439,7 +488,7 @@ def plot_time_vs_mapsize(algo: str) -> None:
         print(f"\n[{algo}] skipped (time vs map size) - missing data")
         return
     agg = _agg_timing(df)
-    _plot_vs_mapsize(algo, agg, "mean_us", "Time [ms]", "time vs map size", f"{algo}_time_vs_mapsize", unit_divisor=1000.0)
+    _plot_vs_mapsize(algo, agg, "mean_us", "Czas [ms]", "czas w funkcji rozmiaru mapy", f"{algo}_time_vs_mapsize", unit_divisor=1000.0)
 
 # czy koszt na komórkę jest stały czy się zmienia (np. przejście między poziomami cache)
 def plot_time_scaling(algo: str) -> None:
@@ -451,7 +500,7 @@ def plot_time_scaling(algo: str) -> None:
     agg["cells"] = agg["map_width"].astype(float) ** 2
     agg["iters"] = agg["map_width"].map(ITERATIONS[algo]).astype(float)
     agg["ns_per_cell"] = agg["mean_us"] * 1000.0 / (agg["cells"] * agg["iters"])
-    _plot_vs_mapsize(algo, agg, "ns_per_cell", "Time per cell and iteration [ns]", "time per cell and iteration vs map size (scaling)", f"{algo}_time_scaling", unit_divisor=1.0)
+    _plot_vs_mapsize(algo, agg, "ns_per_cell", "Czas na komórkę i iterację [ns]", "czas na komórkę i iterację a rozmiar mapy", f"{algo}_time_scaling", unit_divisor=1.0)
 
 
 # 3.3. PRZYŚPIESZENIE
@@ -477,15 +526,16 @@ def plot_speedup_vs_baseline(algo: str) -> None:
     fig, ax = plt.subplots()
     ax.plot(opt["threads_used"], speedup, marker="o", color=_color_for(1))
     ax.axhline(1.0, color="#999999", linestyle="--", linewidth=1)
-    ax.set_xlabel("Thread count")
-    ax.set_ylabel("Speedup relative to baseline C++ (1 thread)")
-    ax.set_title(f"{algo}: speedup optimized/baseline, map {max_size}x{max_size}")
+    ax.set_xlabel("Liczba wątków")
+    ax.set_ylabel("Przyśpieszenie względem C++ (1 wątek)")
+    ax.set_title(f"{algo_label(algo)}: przyśpieszenie wersji zoptymalizowanej, {max_size}x{max_size}")
 
     fig.tight_layout()
     out = output_file(f"{algo}_speedup_vs_baseline.png")
     fig.savefig(out)
     print(f"[{algo}] saved - {out}")
     plt.show()
+    plt.close(fig)
 
 def plot_speedup_vs_gds(algo: str) -> None:
     df = load_timing(algo)
@@ -516,18 +566,16 @@ def plot_speedup_vs_gds(algo: str) -> None:
         x_range = (int(opt["threads_used"].min()), int(opt["threads_used"].max()))
 
     fig, ax = plt.subplots()
-    ax.hlines(base_vs_gds, x_range[0], x_range[1], linestyles="--",
-              color=_color_for(0), label="baseline C++ / GDScript")
+    ax.hlines(base_vs_gds, x_range[0], x_range[1], linestyles="--", color=_color_for(0), label=f"{impl_label('baseline')} / {impl_label('gds')}")
 
     if opt is not None and len(opt) > 1:
         opt_vs_gds = gds_time / opt["mean_us"]
-        ax.plot(opt["threads_used"], opt_vs_gds, marker="o", color=_color_for(1),
-                 label="optimized C++ / GDScript")
+        ax.plot(opt["threads_used"], opt_vs_gds, marker="o", color=_color_for(1), label=f"{impl_label('optimized')} / {impl_label('gds')}")
 
     ax.axhline(1.0, color="#999999", linestyle=":", linewidth=1)
-    ax.set_xlabel("Thread count")
-    ax.set_ylabel("Speedup relative to GDScript")
-    ax.set_title(f"{algo}: speedup C++ relative to GDScript, map {max_size}x{max_size}")
+    ax.set_xlabel("Liczba wątków")
+    ax.set_ylabel("Przyśpieszenie względem GDScript")
+    ax.set_title(f"{algo_label(algo)}: przyśpieszenie C++ względem GDScript, {max_size}x{max_size}")
     ax.legend()
 
     fig.tight_layout()
@@ -535,6 +583,7 @@ def plot_speedup_vs_gds(algo: str) -> None:
     fig.savefig(out)
     print(f"[{algo}] saved - {out}")
     plt.show()
+    plt.close(fig)
 
 
 
@@ -590,20 +639,23 @@ def plot_memory(algo: str, target_bins: int = 60) -> None:
 
         formula = ANALYTICAL_BYTES.get(algo)
         if formula:
-            ax.axhline(formula(max_size) / 1e6, color="#999999", linestyle="--", linewidth=1)
+            ax.axhline(formula(max_size) / 1e6, color="#999999", linestyle="--", linewidth=1, label="wartość analityczna")
 
-        ax.set_xlabel("Time [ms]")
+        ax.set_xlabel("Czas [ms]")
         if idx == 0:
-            ax.set_ylabel("Memory growth vs start [MB]")
+            ax.set_ylabel("Przyrost pamięci względem stanu początkowego [MB]")
         _plain_y_axis(ax)
-        ax.set_title(f"{impl} ({g['run'].nunique()} runs)")
+        ax.set_title(f"{impl_label(impl)} (przebiegi: {g['run'].nunique()})")
+        if formula:
+            ax.legend()
 
-    fig.suptitle(f"{algo}: memory in time per implementation, map {max_size}x{max_size}", fontweight="bold")
+    fig.suptitle(f"{algo_label(algo)}: zużycie pamięci w czasie, {max_size}x{max_size}", fontweight="bold")
     fig.tight_layout()
     out = output_file(f"{algo}_memory.png")
     fig.savefig(out)
     print(f"[{algo}] saved - {out}")
     plt.show()
+    plt.close(fig)
 
 def report_analytical_memory() -> None:
     print("\n=== Analytical buffer footprint (pipe) ===")
@@ -698,14 +750,13 @@ def plot_realtime_frametime(family: str) -> None:
     fig, ax = plt.subplots()
     for idx, (impl, g) in enumerate(sub.groupby("impl")):
         g = g.sort_values("iterations_at_once")
-        ax.plot(g["iterations_at_once"], g["p95_ms"], marker="o",
-                color=_color_for(idx), label=impl)
+        ax.plot(g["iterations_at_once"], g["p95_ms"], marker="o", color=_color_for(idx), label=impl_label(impl))
 
-    ax.axhline(FPS_BUDGET_MS, color="#999999", linestyle="--", linewidth=1, label="60 FPS budget (16.67 ms)")
-    ax.set_xlabel("iterations_at_once")
-    ax.set_ylabel("Frame time, p95 [ms]")
+    ax.axhline(FPS_BUDGET_MS, color="#999999", linestyle="--", linewidth=1, label="budżet 60 kl./s (16.67 ms)")
+    ax.set_xlabel("Liczba iteracji na klatkę")
+    ax.set_ylabel("Czas klatki, p95 [ms]")
     _plain_y_axis(ax)
-    ax.set_title(f"{family}: p95 frame time vs iterations_at_once (map {max_size}x{max_size})")
+    ax.set_title(f"{algo_label(family)}: czas klatki (p95) a liczba iteracji, {max_size}x{max_size}")
     ax.legend()
 
     fig.tight_layout()
@@ -713,6 +764,7 @@ def plot_realtime_frametime(family: str) -> None:
     fig.savefig(out)
     print(f"[{family}] saved - {out}")
     plt.show()
+    plt.close(fig)
 
 # max iterations_at_once mieszczące się w budżecie 60 FPS, w funkcji rozmiaru mapy - jedna linia na implementację
 def plot_realtime_budget_vs_mapsize(family: str) -> None:
@@ -733,15 +785,15 @@ def plot_realtime_budget_vs_mapsize(family: str) -> None:
     fig, ax = plt.subplots()
     for idx, (impl, g) in enumerate(agg.groupby("impl")):
         g = g.sort_values("map_size")
-        ax.plot(g["map_size"], g["max_iters"], marker="o", color=_color_for(idx), label=impl)
+        ax.plot(g["map_size"], g["max_iters"], marker="o", color=_color_for(idx), label=impl_label(impl))
 
     ax.set_xscale("log", base=2)
     ax.set_xticks(sizes)
     ax.set_xticklabels(sizes)
-    ax.set_xlabel("Map size (side)")
-    ax.set_ylabel("Max. iterations_at_once in 60 FPS budget")
+    ax.set_xlabel("Rozmiar mapy (bok)")
+    ax.set_ylabel("Maks. liczba iteracji w budżecie 60 kl./s")
     _plain_y_axis(ax)
-    ax.set_title(f"{family}: 60 FPS budget vs map size")
+    ax.set_title(f"{algo_label(family)}: budżet 60 kl./s w funkcji rozmiaru mapy")
     ax.legend()
 
     fig.tight_layout()
@@ -749,6 +801,7 @@ def plot_realtime_budget_vs_mapsize(family: str) -> None:
     fig.savefig(out)
     print(f"[{family}] saved - {out}")
     plt.show()
+    plt.close(fig)
 
 
 
