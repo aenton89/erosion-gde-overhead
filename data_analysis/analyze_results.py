@@ -103,6 +103,12 @@ ALGO_LABEL = {
     "particle": "m. cząsteczkowy",
 }
 
+SPEEDUP_COLS = {
+    "opt_vs_base": f"{IMPL_LABEL['optimized']} / {IMPL_LABEL['baseline']}",
+    "base_vs_gds": f"{IMPL_LABEL['baseline']} / {IMPL_LABEL['gds']}",
+    "opt_vs_gds": f"{IMPL_LABEL['optimized']} / {IMPL_LABEL['gds']}",
+}
+
 
 
 def impl_label(impl: str) -> str:
@@ -488,6 +494,25 @@ def plot_time_vs_mapsize(algo: str) -> None:
         print(f"\n[{algo}] skipped (time vs map size) - missing data")
         return
     agg = _agg_timing(df)
+
+    # no niech sie jeszcze wypisze na życzenie
+    print(f"\n=== {algo}: TIME vs MAP SIZE ===")
+    rows = []
+    for impl, g in agg.groupby("impl"):
+        best_threads = int(g["threads_used"].max())
+        gg = g[g["threads_used"] == best_threads].sort_values("map_width")
+        for _, r in gg.iterrows():
+            rows.append({
+                "implementacja": impl_label(impl),
+                "wątki": best_threads,
+                "mapa": f"{int(r['map_width'])}x{int(r['map_width'])}",
+                "czas_ms": r["mean_us"] / 1000.0,
+            })
+
+    result = pd.DataFrame(rows)
+    with pd.option_context("display.float_format", lambda x: f"{x:.3f}"):
+        print(result.to_string(index=False))
+
     _plot_vs_mapsize(algo, agg, "mean_us", "Czas [ms]", "czas w funkcji rozmiaru mapy", f"{algo}_time_vs_mapsize", unit_divisor=1000.0)
 
 # czy koszt na komórkę jest stały czy się zmienia (np. przejście między poziomami cache)
@@ -585,6 +610,152 @@ def plot_speedup_vs_gds(algo: str) -> None:
     plt.show()
     plt.close(fig)
 
+# 3.4. PRZYŚPIESZENIE vs ROZMIAR MAPY (maks. liczba wątków) + tabele
+def _best_thread_rows(agg, impl: str):
+    g = agg[agg["impl"] == impl]
+    if g.empty:
+        return None
+    idx = g.groupby("map_width")["threads_used"].idxmax()
+    return g.loc[idx].sort_values("map_width")
+
+def build_speedup_vs_mapsize(algo: str):
+    df = load_timing(algo)
+    if df is None:
+        return None
+    agg = _agg_timing(df)
+
+    times, threads = {}, {}
+    for impl in ("baseline", "gds", "optimized"):
+        rows = _best_thread_rows(agg, impl)
+        if rows is None:
+            continue
+        times[impl] = rows.set_index("map_width")["mean_us"]
+        threads[impl] = rows.set_index("map_width")["threads_used"].astype(int)
+
+    if "gds" not in times and not ("baseline" in times and "optimized" in times):
+        return None
+
+    sizes = sorted({s for t in times.values() for s in t.index})
+    out = pd.DataFrame(index=pd.Index(sizes, name="map_width"))
+
+    if "optimized" in times and "baseline" in times:
+        out["opt_vs_base"] = times["baseline"] / times["optimized"]
+    if "baseline" in times and "gds" in times:
+        out["base_vs_gds"] = times["gds"] / times["baseline"]
+    if "optimized" in times and "gds" in times:
+        out["opt_vs_gds"] = times["gds"] / times["optimized"]
+    if "optimized" in threads:
+        out["threads"] = threads["optimized"]
+
+    return out
+
+def build_speedup_vs_threads(algo: str):
+    df = load_timing(algo)
+    if df is None:
+        return None, None
+    agg = _agg_timing(df)
+    max_size = int(agg["map_width"].max())
+    sub = agg[agg["map_width"] == max_size]
+
+    base = sub[sub["impl"] == "baseline"]
+    gds = sub[sub["impl"] == "gds"]
+    opt = sub[sub["impl"] == "optimized"].sort_values("threads_used")
+    if opt.empty:
+        return None, max_size
+
+    out = pd.DataFrame({"watki": opt["threads_used"].astype(int).values})
+    if not base.empty:
+        out["opt_vs_base"] = (base["mean_us"].iloc[0] / opt["mean_us"]).values
+    if not gds.empty:
+        out["opt_vs_gds"] = (gds["mean_us"].iloc[0] / opt["mean_us"]).values
+        if not base.empty:
+            out["base_vs_gds"] = gds["mean_us"].iloc[0] / base["mean_us"].iloc[0]
+    return out, max_size
+
+def report_speedup_tables(algo: str) -> None:
+    print(f"\n=== {algo}: SPEEDUP (x razy) ===")
+
+    thr_table, max_size = build_speedup_vs_threads(algo)
+    if thr_table is None:
+        print("  (brak implementacji 'optimized' - tabela vs liczba watkow pominieta)")
+    else:
+        t = thr_table.rename(columns={"watki": "wątki", **SPEEDUP_COLS})
+        print(f"\n--- vs liczba wątków, mapa {max_size}x{max_size} ---")
+        with pd.option_context("display.float_format", lambda x: f"{x:.2f}"):
+            print(t.to_string(index=False))
+
+    size_table = build_speedup_vs_mapsize(algo)
+    if size_table is None:
+        print("  (brak danych - tabela vs rozmiar mapy pominieta)")
+        return
+
+    s = size_table.copy()
+    threads_note = ""
+    if "threads" in s.columns:
+        uniq = sorted(set(s["threads"].dropna().astype(int)))
+        threads_note = f", {threads_label(uniq[0])}" if len(uniq) == 1 else ", maks. liczba wątków"
+        # stala liczba watkow, nie ma sensu jako kolumna
+        s = s.drop(columns=["threads"]) if len(uniq) == 1 else s
+    s.index = [f"{int(i)}x{int(i)}" for i in s.index]
+    s.index.name = "mapa"
+    print(f"\n--- vs rozmiar mapy{threads_note} ---")
+    with pd.option_context("display.float_format", lambda x: f"{x:.2f}"):
+        print(s.rename(columns={**SPEEDUP_COLS, "threads": "wątki"}).to_string())
+
+def plot_speedup_vs_mapsize(algo: str) -> None:
+    table = build_speedup_vs_mapsize(algo)
+    if table is None or table.empty:
+        print(f"\n[{algo}] skipped speedup-vs-mapsize - missing data")
+        return
+
+    sizes = [int(s) for s in table.index]
+    threads_note = ""
+    if "threads" in table.columns:
+        uniq = sorted(set(table["threads"].dropna().astype(int)))
+        threads_note = f", {threads_label(uniq[-1])}" if len(uniq) == 1 else ", maks. liczba wątków"
+
+    series = [
+        ("opt_vs_base", f"{impl_label('optimized')} / {impl_label('baseline')}", IMPL_STYLE["gds"]["color"]),
+        ("base_vs_gds", f"{impl_label('baseline')} / {impl_label('gds')}", IMPL_STYLE["baseline"]["color"]),
+        ("opt_vs_gds", f"{impl_label('optimized')} / {impl_label('gds')}", IMPL_STYLE["optimized"]["color"]),
+    ]
+
+    def draw(ax, log_variant: bool) -> None:
+        for col, label, color in series:
+            if col not in table.columns:
+                continue
+            s = table[col].dropna()
+            if s.empty:
+                continue
+            ax.plot([int(i) for i in s.index], s.values, marker="o", color=color, label=label)
+
+        ax.axhline(1.0, color="#999999", linestyle="--", linewidth=1)
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(sizes)
+        ax.set_xticklabels(sizes)
+        ax.set_xlabel("Rozmiar mapy (bok)")
+        ax.set_ylabel("Przyśpieszenie [razy]")
+
+        title = f"{algo_label(algo)}: przyśpieszenie a rozmiar mapy{threads_note}"
+        if log_variant:
+            ax.set_yscale("log")
+            ax.set_title(f"{title}, skala log.")
+        else:
+            _plain_y_axis(ax)
+            ax.set_title(title)
+        ax.legend()
+
+    for log_variant in (False, True):
+        fig, ax = plt.subplots()
+        draw(ax, log_variant)
+        fig.tight_layout()
+        out = output_file(f"{algo}_speedup_vs_mapsize_{'log' if log_variant else 'linear'}.png")
+        fig.savefig(out)
+        print(f"[{algo}] saved - {out}")
+        plt.show()
+        plt.close(fig)
+
+    save_linear_log_pair(draw, f"{algo}_speedup_vs_mapsize", f"{algo_label(algo)}: przyśpieszenie a rozmiar mapy{threads_note}", algo)
 
 
 # 4. PAMIĘĆ W CZASIE
@@ -821,6 +992,8 @@ def main() -> None:
         plot_time_scaling(algo)
         plot_speedup_vs_baseline(algo)
         plot_speedup_vs_gds(algo)
+        plot_speedup_vs_mapsize(algo)
+        report_speedup_tables(algo)
         plot_memory(algo)
 
     for family in ("pipe", "particle"):
