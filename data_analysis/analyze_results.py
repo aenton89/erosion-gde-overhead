@@ -976,6 +976,67 @@ def plot_realtime_budget_vs_mapsize(family: str) -> None:
 
 
 
+# 6. INTERPOLACJA
+def power_exponent(s_lo: float, t_lo: float, s_hi: float, t_hi: float) -> float:
+    return float(np.log(t_hi / t_lo) / np.log(s_hi / s_lo))
+
+def local_exponents(sizes, times_ms):
+    s = np.asarray(sizes, dtype=float)
+    t = np.asarray(times_ms, dtype=float)
+    return [power_exponent(s[i], t[i], s[i + 1], t[i + 1]) for i in range(s.size - 1)]
+
+def estimate_threshold(sizes, times_ms, budget_ms: float):
+    s = np.asarray(sizes, dtype=float)
+    t = np.asarray(times_ms, dtype=float)
+    if s.size < 2:
+        return None
+ 
+    below = np.nonzero(t < budget_ms)[0]
+    above = np.nonzero(t >= budget_ms)[0]
+    if below.size and above.size:
+        i, j = int(below[-1]), int(above[0])
+        extrapolated = False
+    else:
+        i, j = (s.size - 2, s.size - 1) if not above.size else (0, 1)
+        extrapolated = True
+ 
+    k = power_exponent(s[i], t[i], s[j], t[j])
+    side = float(s[i] * (budget_ms / t[i]) ** (1.0 / k))
+    return side, k, extrapolated
+
+def build_threshold_estimates(algo: str, budgets=(50.0, 100.0, 200.0)):
+    df = load_timing(algo)
+    if df is None:
+        return None
+    agg = _agg_timing(df)
+ 
+    rows = []
+    for impl in ("gds", "baseline", "optimized"):
+        best = _best_thread_rows(agg, impl)
+        if best is None:
+            continue
+        sizes = best["map_width"].to_numpy(dtype=float)
+        times = best["mean_us"].to_numpy(dtype=float) / 1000.0
+ 
+        row = {"impl": impl_label(impl)}
+        for b in budgets:
+            est = estimate_threshold(sizes, times, b)
+            if est is None:
+                continue
+            side, k, extrapolated = est
+            row[f"{b:g} ms"] = f"{side:.0f}{'*' if extrapolated else ''}"
+            row[f"k ({b:g} ms)"] = round(k, 2)
+        
+        row["k w przedzialach"] = ", ".join(f"{k:.2f}" for k in local_exponents(sizes, times))
+        rows.append(row)
+ 
+    if not rows:
+        return None
+    print(f"[{algo}] gwiazdka oznacza ekstrapolację poza zbadany zakres rozmiarów map")
+    return pd.DataFrame(rows).set_index("impl")
+
+
+
 def main() -> None:
     apply_style()
 
@@ -995,6 +1056,11 @@ def main() -> None:
         plot_speedup_vs_mapsize(algo)
         report_speedup_tables(algo)
         plot_memory(algo)
+
+        tab = build_threshold_estimates(algo, budgets=(50.0, 100.0, 200.0))
+        if tab is not None:
+            print(f"\n [{algo}]: szacowane progi (bok mapy):")
+            print(tab.to_string())
 
     for family in ("pipe", "particle"):
         report_max_iterations_table(family)
